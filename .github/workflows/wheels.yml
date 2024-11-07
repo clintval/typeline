@@ -7,55 +7,26 @@ on:
 
 jobs:
   build-wheels:
-    name: Build wheels for ${{ matrix.python }}-${{ matrix.platform.target }}_${{ matrix.platform.arch }} on ${{ matrix.platform.os }}
-    runs-on: ${{ matrix.platform.os }}
+    name: Build wheels for ${{ matrix.python }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: [cp312]
-        platform:
-          - os: ubuntu-latest
-            target: manylinux
-            arch: x86_64
-          - os: ubuntu-latest
-            target: musllinux
-            arch: x86_64
-          # These don't work right now - they just hang while pulling the build image from quay.
-          # If this doesn't resolve itself, we could try to configure different images:
-          # https://cibuildwheel.readthedocs.io/en/stable/options/.
-          # - os: ubuntu-latest
-          #   target: manylinux
-          #   arch: aarch64
-          # - os: ubuntu-latest
-          #   target: musllinux
-          #   arch: aarch64
-          - os: macos-latest
-            target: macosx
-            arch: x86_64
-          - os: macos-latest
-            target: macosx
-            arch: arm64
+        python: ["3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: "true"
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python ${{ matrix.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.12
-
-      - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.17.0
+          python-version: ${{ matrix.python }}
 
       - name: Build wheels
-        run: python -m cibuildwheel --output-dir wheelhouse
-        env:
-          CIBW_ARCHS: ${{ matrix.platform.arch }}
-          CIBW_BUILD: ${{ matrix.python }}-${{ matrix.platform.target }}_${{ matrix.platform.arch }}
-          CIBW_BUILD_VERBOSITY: 1
+        run: pip wheel --no-deps -w wheelhouse .
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
         with:
-          name: typeline-wheels-${{ matrix.python }}-${{ matrix.platform.target }}_${{ matrix.platform.arch }}
-          path: ./wheelhouse/*.whl
+          name: typeline-wheels-${{ matrix.python }}
+          path: ./wheelhouse/typeline*.whl
           if-no-files-found: error
