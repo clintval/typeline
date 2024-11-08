@@ -38,9 +38,12 @@ pip install typeline
 ### Writing
 
 ```pycon
+>>> from tempfile import NamedTemporaryFile
 >>> from typeline import TsvStructWriter
 >>> 
->>> with TsvStructWriter.from_path("test.tsv", MyData) as writer:
+>>> temp_file = NamedTemporaryFile(mode="w+t", suffix=".txt")
+>>>
+>>> with TsvStructWriter.from_path(temp_file.name, MyData) as writer:
 ...     writer.write_header()
 ...     writer.write(MyData(10, "test1", 0.2))
 ...     writer.write(MyData(20, "test2", None))
@@ -52,7 +55,7 @@ pip install typeline
 ```pycon
 >>> from typeline import TsvStructReader
 >>> 
->>> with TsvStructReader.from_path("test.tsv", MyData) as reader:
+>>> with TsvStructReader.from_path(temp_file.name, MyData) as reader:
 ...     for record in reader:
 ...         print(record)
 MyData(field1=10, field2='test1', field3=0.2)
