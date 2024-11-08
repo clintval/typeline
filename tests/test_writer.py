@@ -38,7 +38,6 @@ def test_csv_writer_is_set_to_use_comma(tmp_path: Path) -> None:
 
 def test_tsv_writer_is_set_to_use_tab(tmp_path: Path) -> None:
     """Test that the TSV writer is set to use a tab."""
-    assert TsvStructWriter.delimiter == "\t"
     with TsvStructWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
@@ -129,7 +128,6 @@ def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
         @staticmethod
         def _encode(item: Any) -> Any:
             """A callback for overriding the encoding of builtin types and custom types."""
-            print(item)
             if isinstance(item, list):
                 return ",".join(map(str, item))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
             return item

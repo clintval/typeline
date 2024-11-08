@@ -1,6 +1,7 @@
 import csv
 import json
 from abc import ABC
+from abc import abstractmethod
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
@@ -15,6 +16,7 @@ from types import TracebackType
 from types import UnionType
 from typing import Any
 from typing import Generic
+from typing import final
 from typing import get_args
 from typing import get_origin
 
@@ -32,15 +34,11 @@ class DelimitedStructReader(
     Generic[RecordType],
     ABC,
 ):
-    """
-    A reader for reading delimited data into dataclasses.
+    """A reader for reading delimited data into dataclasses.
 
     Attributes:
-        delimiter: the field delimiter in the input delimited data.
         comment_prefixes: any string that when one prefixes a line, marks it as a comment.
     """
-
-    delimiter: str
 
     def __init__(
         self,
@@ -49,8 +47,7 @@ class DelimitedStructReader(
         /,
         has_header: bool = True,
     ):
-        """
-        Instantiate a new delimited struct reader.
+        """Instantiate a new delimited struct reader.
 
         Args:
             handle: a file-like object to read records from.
@@ -76,6 +73,11 @@ class DelimitedStructReader(
             self._header
         ):
             raise ValueError("Fields of header do not match fields of dataclass!")
+
+    @property
+    @abstractmethod
+    def delimiter(self) -> str:
+        """Delimiter character to use in the output."""
 
     @override
     def __enter__(self) -> Self:
@@ -196,11 +198,9 @@ class DelimitedStructReader(
 
 
 class CsvStructReader(DelimitedStructReader[RecordType]):
-    r"""
-    A reader for reading comma-delimited data into dataclasses.
+    r"""A reader for reading comma-delimited data into dataclasses.
 
     Attributes:
-        delimiter: the field delimiter in the input delimited data.
         comment_prefixes: any string that when one prefixes a line, marks it as a comment.
 
     Example:
@@ -227,15 +227,17 @@ class CsvStructReader(DelimitedStructReader[RecordType]):
         ```
     """
 
-    delimiter: str = ","
+    @property
+    @override
+    @final
+    def delimiter(self) -> str:
+        return ","
 
 
 class TsvStructReader(DelimitedStructReader[RecordType]):
-    r"""
-    A reader for reading tab-delimited data into dataclasses.
+    r"""A reader for reading tab-delimited data into dataclasses.
 
     Attributes:
-        delimiter: the field delimiter in the input delimited data.
         comment_prefixes: any string that when one prefixes a line, marks it as a comment.
 
     Example:
@@ -262,4 +264,8 @@ class TsvStructReader(DelimitedStructReader[RecordType]):
         ```
     """
 
-    delimiter: str = "\t"
+    @property
+    @override
+    @final
+    def delimiter(self) -> str:
+        return "\t"

@@ -1,6 +1,7 @@
 import csv
 import json
 from abc import ABC
+from abc import abstractmethod
 from contextlib import AbstractContextManager
 from csv import DictWriter
 from dataclasses import Field
@@ -12,6 +13,7 @@ from types import TracebackType
 from typing import Any
 from typing import Generic
 from typing import cast
+from typing import final
 
 from msgspec import to_builtins
 from typing_extensions import Self
@@ -25,18 +27,10 @@ class DelimitedStructWriter(
     Generic[RecordType],
     ABC,
 ):
-    """
-    A writer for writing dataclasses into delimited data.
-
-    Attributes:
-        delimiter: the field delimiter in the output delimited data.
-    """
-
-    delimiter: str
+    """A writer for writing dataclasses into delimited data."""
 
     def __init__(self, handle: TextIOWrapper, record_type: type[RecordType]) -> None:
-        """
-        Instantiate a new delimited struct writer.
+        """Instantiate a new delimited struct writer.
 
         Args:
             handle: a file-like object to write records to.
@@ -55,6 +49,11 @@ class DelimitedStructWriter(
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
+
+    @property
+    @abstractmethod
+    def delimiter(self) -> str:
+        """Delimiter character to use in the output."""
 
     @override
     def __enter__(self) -> Self:
@@ -115,11 +114,7 @@ class DelimitedStructWriter(
 
 
 class CsvStructWriter(DelimitedStructWriter[RecordType]):
-    r"""
-    A writer for writing dataclasses into comma-delimited data.
-
-    Attributes:
-        delimiter: the field delimiter in the output delimited data.
+    r"""A writer for writing dataclasses into comma-delimited data.
 
     Example:
         ```pycon
@@ -144,15 +139,15 @@ class CsvStructWriter(DelimitedStructWriter[RecordType]):
         ```
     """
 
-    delimiter: str = ","
+    @property
+    @override
+    @final
+    def delimiter(self) -> str:
+        return ","
 
 
 class TsvStructWriter(DelimitedStructWriter[RecordType]):
-    r"""
-    A writer for writing dataclasses into tab-delimited data.
-
-    Attributes:
-        delimiter: the field delimiter in the output delimited data.
+    r"""A writer for writing dataclasses into tab-delimited data.
 
     Example:
         ```pycon
@@ -177,4 +172,8 @@ class TsvStructWriter(DelimitedStructWriter[RecordType]):
         ```
     """
 
-    delimiter: str = "\t"
+    @property
+    @override
+    @final
+    def delimiter(self) -> str:
+        return "\t"

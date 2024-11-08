@@ -4,8 +4,7 @@ from dataclasses import field
 
 @dataclass
 class SimpleMetric:
-    """
-    A simple metric for unit testing purposes.
+    """A simple metric for unit testing purposes.
 
     Attributes:
         field1: integer value for testing basic numeric types.
