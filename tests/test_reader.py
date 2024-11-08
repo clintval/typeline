@@ -4,6 +4,7 @@ from typing import Any
 from typing import get_origin
 
 import pytest
+from msgspec import ValidationError
 from typing_extensions import override
 
 from typeline import CsvStructReader
@@ -259,3 +260,26 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
 
     with SimpleListReader.from_path(tmp_path / "test.txt", MyMetric) as reader:
         assert list(reader) == [MyMetric(0.1, [1, 2, 3])]
+
+
+def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
+    """Test that we clarify when msgspec cannot decode a structure of builtins."""
+
+    @dataclass
+    class MyData:
+        field1: str
+        field2: list[int]
+
+    (tmp_path / "test.txt").write_text("field1,field2\nmy-name,null\n")
+
+    with CsvStructReader.from_path(tmp_path / "test.txt", MyData) as reader:
+        with pytest.raises(
+            ValidationError,
+            match=(
+                r"Could not parse JSON-like object into requested structure:"
+                + r" \{'field1'\: 'my-name', 'field2': None\}."
+                + r" Requested structure: MyData. Original exception:"
+                + r" Expected \`array\`, got \`null\` - at \`\$.field2\`"
+            ),
+        ):
+            list(reader)
