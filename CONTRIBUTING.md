@@ -40,6 +40,24 @@ poetry check --lock
 
 ## Shortcut Task Commands
 
+To be able to run shortcut task commands, first install the Poetry plugin [`poethepoet`](https://poethepoet.natn.io/index.html):
+
+```console
+poetry self add 'poethepoet[poetry_plugin]'
+```
+
+> [!NOTE]
+> Upon the release of Poetry [v2.0.0](https://github.com/orgs/python-poetry/discussions/9793#discussioncomment-11043205), Poetry will automatically support bootstrap installation of [project-specific plugins](https://github.com/python-poetry/poetry/pull/9547) and installation of the task runner will become automatic for this project.
+> The `pyproject.toml` syntax will be:
+> 
+> ```toml
+> [tool.poetry]
+> requires-poetry = ">=2.0"
+> 
+> [tool.poetry.requires-plugins]
+> poethepoet = ">=0.29"
+> ```
+
 ### For Running Individual Checks
 
 ```console
