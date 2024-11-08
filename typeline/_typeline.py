@@ -7,6 +7,7 @@ from dataclasses import fields as fields_of
 from dataclasses import is_dataclass
 from io import TextIOWrapper
 from pathlib import Path
+from types import GenericAlias
 from types import NoneType
 from types import TracebackType
 from types import UnionType
@@ -20,7 +21,6 @@ from typing import Protocol
 from typing import Self
 from typing import TypeAlias
 from typing import TypeVar
-from typing import cast
 from typing import get_args
 from typing import get_origin
 from typing import runtime_checkable
@@ -75,7 +75,7 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
             handle,
             fieldnames=self._header,
             delimiter=self.delimiter,
-            quotechar='\'',
+            quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
 
@@ -108,7 +108,7 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
         builtin = {
             name: (json.dumps(value) if not isinstance(value, str) else value)
-            for name, value  in to_builtins(encoded, str_keys=True).items()
+            for name, value in to_builtins(encoded, str_keys=True).items()
         }
         self._writer.writerow(builtin)
         return None
@@ -259,8 +259,8 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             if not any(line.strip().startswith(char) for char in self.comment_chars):
                 yield line
 
-    def _value_to_builtin(self, name: str, value: str, field_type: type) -> Any:
-        type_args: tuple[type] | None = get_args(field_type)
+    def _value_to_builtin(self, name: str, value: str, field_type: type | str | Any) -> Any:
+        type_args: tuple[type, ...] = get_args(field_type)
         type_origin: type | None = get_origin(field_type)
         is_union: bool = isinstance(field_type, UnionType)
 
@@ -276,13 +276,11 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             return f'"{name}":{value}'
         elif field_type is str or (is_union and str in type_args):
             return f'"{name}":"{value}"'
-        elif type_origin in (list, set, tuple):
+        elif type_origin in (dict, list, set, tuple):
             return f'"{name}":{value}'
-        elif is_union and type_args is not None and len(type_args) == 2 and NoneType in type_args:
-            other_type = next(iter(set(type_args) - {NoneType}))
+        elif is_union and len(type_args) == 2 and NoneType in type_args:
+            other_type: type = next(iter(set(type_args) - {NoneType}))
             return self._value_to_builtin(name, value, other_type)
-        elif type_origin in (dict,):
-            raise NotImplementedError(f"Dictionary types ({field_type}) are not supported!")
         else:
             return f'"{name}":{value}'
 
@@ -291,7 +289,10 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
         key_values: list[str] = []
 
         for (name, value), field_type in zip(record.items(), self._types, strict=True):
-            decoded: Any = self._decode(cast(type, field_type), value)
+            decoded: Any = self._decode(field_type, value)
+
+            if not isinstance(field_type, (type, GenericAlias)):
+                raise TypeError("Input data without simple type annotations is not supported!")
 
             key_value = self._value_to_builtin(name, decoded, field_type)
 
@@ -316,7 +317,7 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             )
 
     @staticmethod
-    def _decode(_: type, item: Any) -> Any:
+    def _decode(_: type[Any] | str | Any, item: Any) -> Any:
         """A callback for overriding the decoding of builtin types and custom types."""
         return item
 
