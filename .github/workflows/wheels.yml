@@ -19,7 +19,7 @@ jobs:
       - name: Set up Python ${{ matrix.PYTHON_VERSION }}
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: ${{ matrix.PYTHON_VERSION }}
 
       - name: Build wheels
         run: pip wheel --no-deps -w wheelhouse .

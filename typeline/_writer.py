@@ -17,7 +17,7 @@ from msgspec import to_builtins
 from typing_extensions import Self
 from typing_extensions import override
 
-from ._typeline import RecordType
+from ._data_types import RecordType
 
 
 class DelimitedStructWriter(
@@ -42,7 +42,8 @@ class DelimitedStructWriter(
             handle: a file-like object to write records to.
             record_type: the type of the object we will be writing.
         """
-        assert is_dataclass(record_type), "record_type is not a dataclass but must be!"
+        if not is_dataclass(record_type):
+            raise ValueError("record_type is not a dataclass but must be!")
         self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -92,8 +93,11 @@ class DelimitedStructWriter(
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object."""
-        assert is_dataclass(record), "record is not a dataclass but must be!"
-        assert isinstance(record, self._record_type), f"Expected {self._record_type.__name__}!"
+        if not isinstance(record, self._record_type):
+            raise ValueError(
+                f"Expected {self._record_type.__name__} but found"
+                + f" {record.__class__.__qualname__}!"
+            )
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
         builtin = {
             name: (json.dumps(value) if not isinstance(value, str) else value)
@@ -102,7 +106,7 @@ class DelimitedStructWriter(
         self._writer.writerow(builtin)
         return None
 
-    def writeheader(self) -> None:
+    def write_header(self) -> None:
         """Write the header line to the open file-like object."""
         self._writer.writeheader()
         return None
@@ -122,18 +126,62 @@ class DelimitedStructWriter(
 
 
 class CsvStructWriter(DelimitedStructWriter[RecordType], delimiter=","):
-    """
+    r"""
     A writer for writing dataclasses into comma-delimited data.
 
     Attributes:
         delimiter: the field delimiter in the output delimited data.
+
+    Example:
+        ```pycon
+        >>> from pathlib import Path
+        >>> from dataclasses import dataclass
+        >>> from tempfile import NamedTemporaryFile
+        >>>
+        >>> @dataclass
+        ... class MyData:
+        ...     field1: str
+        ...     field2: float | None
+        >>>
+        >>> from typeline import CsvStructWriter
+        >>>
+        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
+        ...     with CsvStructWriter.from_path(tmpfile.name, MyData) as writer:
+        ...         writer.write_header()
+        ...         writer.write(MyData(field1="my-name", field2=0.2))
+        ...     Path(tmpfile.name).read_text()
+        'field1,field2\nmy-name,0.2\n'
+
+        ```
     """
 
 
 class TsvStructWriter(DelimitedStructWriter[RecordType], delimiter="\t"):
-    """
+    r"""
     A writer for writing dataclasses into tab-delimited data.
 
     Attributes:
         delimiter: the field delimiter in the output delimited data.
+
+    Example:
+        ```pycon
+        >>> from pathlib import Path
+        >>> from dataclasses import dataclass
+        >>> from tempfile import NamedTemporaryFile
+        >>>
+        >>> @dataclass
+        ... class MyData:
+        ...     field1: str
+        ...     field2: float | None
+        >>>
+        >>> from typeline import TsvStructWriter
+        >>>
+        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
+        ...     with TsvStructWriter.from_path(tmpfile.name, MyData) as writer:
+        ...         writer.write_header()
+        ...         writer.write(MyData(field1="my-name", field2=0.2))
+        ...     Path(tmpfile.name).read_text()
+        'field1\tfield2\nmy-name\t0.2\n'
+
+        ```
     """

@@ -24,39 +24,40 @@ pip install typeline
 
 ### Building a Test Dataclass
 
-```python
-from dataclasses import dataclass
+```pycon
+>>> from dataclasses import dataclass
+>>>
+>>> @dataclass
+... class MyData:
+...     field1: int
+...     field2: str
+...     field3: float | None
 
-@dataclass
-class MyData:
-    field1: int
-    field2: str
-    field3: float | None
 ```
 
 ### Writing
 
-```python
-from typeline import TsvStructWriter
+```pycon
+>>> from typeline import TsvStructWriter
+>>> 
+>>> with TsvStructWriter.from_path("test.tsv", MyData) as writer:
+...     writer.write_header()
+...     writer.write(MyData(10, "test1", 0.2))
+...     writer.write(MyData(20, "test2", None))
 
-with TsvStructWriter.from_path("test.tsv", MyData) as writer:
-    writer.writeheader()
-    writer.write(MyData(10, "test1", 0.2))
-    writer.write(MyData(20, "test2", None))
 ```
 
 ### Reading
 
-```python
-from typeline import TsvStructReader
-
-with TsvStructReader.from_path("test.tsv", MyData) as reader:
-    for record in reader:
-        print(record)
-```
-```console
+```pycon
+>>> from typeline import TsvStructReader
+>>> 
+>>> with TsvStructReader.from_path("test.tsv", MyData) as reader:
+...     for record in reader:
+...         print(record)
 MyData(field1=10, field2='test1', field3=0.2)
 MyData(field1=20, field2='test2', field3=None)
+
 ```
 
 ## Development and Testing

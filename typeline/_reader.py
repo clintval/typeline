@@ -22,8 +22,8 @@ from msgspec import convert
 from typing_extensions import Self
 from typing_extensions import override
 
-from ._typeline import JsonType
-from ._typeline import RecordType
+from ._data_types import JsonType
+from ._data_types import RecordType
 
 
 class DelimitedStructReader(
@@ -37,7 +37,7 @@ class DelimitedStructReader(
 
     Attributes:
         delimiter: the field delimiter in the input delimited data.
-        comment_chars: any characters that when one prefixes a line marks it as a comment.
+        comment_prefixes: any string that when one prefixes a line, marks it as a comment.
     """
 
     delimiter: str
@@ -57,8 +57,9 @@ class DelimitedStructReader(
             record_type: the type of the object we will be writing.
             has_header: whether we expect the first line to be a header or not.
         """
-        assert is_dataclass(record_type), "record_type is not a dataclass but must be!"
-        self.comment_chars: set[str] = {"#"}
+        if not is_dataclass(record_type):
+            raise ValueError("record_type is not a dataclass but must be!")
+        self.comment_prefixes: set[str] = {"#"}
         self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -108,7 +109,7 @@ class DelimitedStructReader(
         """Yield only lines in an iterator that do not start with a comment character."""
         for line in lines:
             stripped: str = line.strip()
-            if stripped and not any(stripped.startswith(char) for char in self.comment_chars):
+            if stripped and not any(stripped.startswith(char) for char in self.comment_prefixes):
                 yield line
 
     def _value_to_builtin(self, name: str, value: Any, field_type: type | str | Any) -> Any:
@@ -165,7 +166,8 @@ class DelimitedStructReader(
             except ValueError as exception:
                 raise ValueError(
                     f"Could not parse {record} as {self._record_type.__name__}!"
-                    + f" Intermediate structure formed is: {as_builtins}"
+                    + f" Intermediate structure formed is: {as_builtins}."
+                    + f" Original error: {exception}"
                 ) from exception
 
     @staticmethod
@@ -192,20 +194,66 @@ class DelimitedStructReader(
 
 
 class CsvStructReader(DelimitedStructReader[RecordType], delimiter=","):
-    """
+    r"""
     A reader for reading comma-delimited data into dataclasses.
 
     Attributes:
         delimiter: the field delimiter in the input delimited data.
-        comment_chars: any characters that when one prefixes a line marks it as a comment.
+        comment_prefixes: any string that when one prefixes a line, marks it as a comment.
+
+    Example:
+        ```pycon
+        >>> from pathlib import Path
+        >>> from dataclasses import dataclass
+        >>> from tempfile import NamedTemporaryFile
+        >>>
+        >>> @dataclass
+        ... class MyData:
+        ...     field1: str
+        ...     field2: float | None
+        >>>
+        >>> from typeline import CsvStructReader
+        >>>
+        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
+        ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
+        ...     _ = tmpfile.flush()
+        ...     with CsvStructReader.from_path(tmpfile.name, MyData) as reader:
+        ...         for record in reader:
+        ...             print(record)
+        MyData(field1='my-name', field2=0.2)
+
+        ```
     """
 
 
 class TsvStructReader(DelimitedStructReader[RecordType], delimiter="\t"):
-    """
+    r"""
     A reader for reading tab-delimited data into dataclasses.
 
     Attributes:
         delimiter: the field delimiter in the input delimited data.
-        comment_chars: any characters that when one prefixes a line marks it as a comment.
+        comment_prefixes: any string that when one prefixes a line, marks it as a comment.
+
+    Example:
+        ```pycon
+        >>> from pathlib import Path
+        >>> from dataclasses import dataclass
+        >>> from tempfile import NamedTemporaryFile
+        >>>
+        >>> @dataclass
+        ... class MyData:
+        ...     field1: str
+        ...     field2: float | None
+        >>>
+        >>> from typeline import TsvStructReader
+        >>>
+        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
+        ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
+        ...     _ = tmpfile.flush()
+        ...     with TsvStructReader.from_path(tmpfile.name, MyData) as reader:
+        ...         for record in reader:
+        ...             print(record)
+        MyData(field1='my-name', field2=0.2)
+
+        ```
     """
