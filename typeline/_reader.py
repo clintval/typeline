@@ -77,17 +77,6 @@ class DelimitedStructReader(
         ):
             raise ValueError("Fields of header do not match fields of dataclass!")
 
-    def __init_subclass__(cls, delimiter: str, **kwargs: Any) -> None:
-        """
-        Initialize all subclasses by setting the delimiter.
-
-        Args:
-            delimiter: the field delimiter in the output delimited data.
-            kwargs: any other key-word arguments.
-        """
-        super().__init_subclass__(**kwargs)
-        cls.delimiter = delimiter
-
     @override
     def __enter__(self) -> Self:
         """Enter this context."""
@@ -152,7 +141,20 @@ class DelimitedStructReader(
 
             key_values.append(key_value)
 
-        as_builtins: JsonType = json.loads(f"{{{','.join(key_values)}}}")
+        json_string: str = f"{{{','.join(key_values)}}}"
+
+        try:
+            as_builtins: JsonType = json.loads(json_string)
+        except json.decoder.JSONDecodeError as exception:
+            raise json.decoder.JSONDecodeError(
+                msg=(
+                    "Could not load delimited data line into JSON-like format."
+                    + f" Built improperly formatted JSON: {json_string}."
+                    + f" Originally formatted message: {exception.msg}."
+                ),
+                doc=exception.doc,
+                pos=exception.pos,
+            ) from exception
 
         return as_builtins
 
@@ -171,7 +173,7 @@ class DelimitedStructReader(
                 ) from exception
 
     @staticmethod
-    def _decode(_: type[Any] | str | Any, item: Any) -> Any:
+    def _decode(record_type: type[Any] | str | Any, item: Any) -> Any:  # noqa: ARG004  # pyright: ignore[reportUnusedParameter]
         """A callback for overriding the decoding of builtin types and custom types."""
         return item
 
@@ -193,7 +195,7 @@ class DelimitedStructReader(
         return reader
 
 
-class CsvStructReader(DelimitedStructReader[RecordType], delimiter=","):
+class CsvStructReader(DelimitedStructReader[RecordType]):
     r"""
     A reader for reading comma-delimited data into dataclasses.
 
@@ -225,8 +227,10 @@ class CsvStructReader(DelimitedStructReader[RecordType], delimiter=","):
         ```
     """
 
+    delimiter: str = ","
 
-class TsvStructReader(DelimitedStructReader[RecordType], delimiter="\t"):
+
+class TsvStructReader(DelimitedStructReader[RecordType]):
     r"""
     A reader for reading tab-delimited data into dataclasses.
 
@@ -257,3 +261,5 @@ class TsvStructReader(DelimitedStructReader[RecordType], delimiter="\t"):
 
         ```
     """
+
+    delimiter: str = "\t"

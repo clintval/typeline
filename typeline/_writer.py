@@ -56,17 +56,6 @@ class DelimitedStructWriter(
             quoting=csv.QUOTE_MINIMAL,
         )
 
-    def __init_subclass__(cls, delimiter: str, **kwargs: Any) -> None:
-        """
-        Initialize all subclasses by setting the delimiter.
-
-        Args:
-            delimiter: the field delimiter in the output delimited data.
-            kwargs: any other key-word arguments.
-        """
-        super().__init_subclass__(**kwargs)
-        cls.delimiter = delimiter
-
     @override
     def __enter__(self) -> Self:
         """Enter this context."""
@@ -125,7 +114,7 @@ class DelimitedStructWriter(
         return writer
 
 
-class CsvStructWriter(DelimitedStructWriter[RecordType], delimiter=","):
+class CsvStructWriter(DelimitedStructWriter[RecordType]):
     r"""
     A writer for writing dataclasses into comma-delimited data.
 
@@ -155,8 +144,10 @@ class CsvStructWriter(DelimitedStructWriter[RecordType], delimiter=","):
         ```
     """
 
+    delimiter: str = ","
 
-class TsvStructWriter(DelimitedStructWriter[RecordType], delimiter="\t"):
+
+class TsvStructWriter(DelimitedStructWriter[RecordType]):
     r"""
     A writer for writing dataclasses into tab-delimited data.
 
@@ -185,3 +176,5 @@ class TsvStructWriter(DelimitedStructWriter[RecordType], delimiter="\t"):
 
         ```
     """
+
+    delimiter: str = "\t"

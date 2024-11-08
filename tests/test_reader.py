@@ -1,9 +1,14 @@
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+from typing import get_origin
 
 import pytest
+from typing_extensions import override
 
 from typeline import CsvStructReader
 from typeline import CsvStructWriter
+from typeline import RecordType
 from typeline import TsvStructReader
 from typeline import TsvStructWriter
 
@@ -208,7 +213,16 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
 
     with (
         TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader,
-        pytest.raises(ValueError, match=r"Expecting value: line 1 column 38 \(char 37\)"),
+        pytest.raises(
+            ValueError,
+            match=(
+                r"Could not load delimited data line into JSON-like format\."
+                + r" Built improperly formatted JSON\:"
+                + r' \{"field1"\:1,"field2"\:"name","field3"\:BOMB}\.'
+                + r" Originally formatted message\:"
+                + r" Expecting value\.\: line 1 column 38 \(char 37\)"
+            ),
+        ),
     ):
         list(reader)
 
@@ -221,3 +235,27 @@ def test_reader_can_read_empty_file_ok(tmp_path: Path) -> None:
         TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric, has_header=False) as reader,
     ):
         assert list(reader) == []
+
+
+def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
+    """Test we can implement a reader with a custom decode callback."""
+
+    @dataclass
+    class MyMetric:
+        field1: float
+        field2: list[int]
+
+    (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1,2,3,'\n")
+
+    class SimpleListReader(CsvStructReader[RecordType]):
+        @override
+        @staticmethod
+        def _decode(record_type: type[Any] | str | Any, item: Any) -> Any:
+            """A callback for overriding the decoding of builtin types and custom types."""
+            if get_origin(record_type) is list:
+                stripped: str = item.rstrip(",")
+                return f"[{stripped}]"
+            return item
+
+    with SimpleListReader.from_path(tmp_path / "test.txt", MyMetric) as reader:
+        assert list(reader) == [MyMetric(0.1, [1, 2, 3])]

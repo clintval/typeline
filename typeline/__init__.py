@@ -1,4 +1,5 @@
 # ruff: noqa: F401
+from ._data_types import RecordType
 from ._reader import CsvStructReader
 from ._reader import DelimitedStructReader
 from ._reader import TsvStructReader
@@ -13,4 +14,5 @@ __all__ = [
     "CsvStructWriter",
     "DelimitedStructWriter",
     "TsvStructWriter",
+    "RecordType",
 ]
