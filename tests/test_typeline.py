@@ -298,3 +298,55 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
             SimpleMetric(field1=1, field2="name", field3=0.2),
             SimpleMetric(field1=2, field2="name2", field3=0.3),
         ]
+
+
+def test_reader_raises_exception_for_missing_fields(tmp_path: Path) -> None:
+    """Test the reader raises an exception for missing fields."""
+    (tmp_path / "test.txt").write_text(
+        "\n".join([
+            "field1\tfield2\n",
+            "1\tname\t0.2\n",
+        ])
+    )
+
+    with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
+        TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric)
+
+
+def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
+    """Test the reader raises an exception for extra fields."""
+    (tmp_path / "test.txt").write_text(
+        "\n".join([
+            "field1\tfield2\tfield3\tfield4\n",
+            "1\tname\t0.2\thi-five\n",
+        ])
+    )
+
+    with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
+        TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric)
+
+
+def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> None:
+    """Test the reader raises an exception for failed type coercion."""
+    (tmp_path / "test.txt").write_text(
+        "\n".join([
+            "field1\tfield2\tfield3\n",
+            "1\tname\tBOMB\n",
+        ])
+    )
+
+    with (
+        TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader,
+        pytest.raises(ValueError, match=r"Expecting value: line 1 column 38 \(char 37\)"),
+    ):
+        list(reader)
+
+
+def test_reader_can_read_empty_file_ok(tmp_path: Path) -> None:
+    """Test the reader can read an empty file if asked to."""
+    (tmp_path / "test.txt").touch()
+
+    with (
+        TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric, has_header=False) as reader,
+    ):
+        assert list(reader) == []
