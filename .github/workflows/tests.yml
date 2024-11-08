@@ -52,8 +52,5 @@ jobs:
       - name: Install the library
         run: poetry install -v
 
-      - name: Install the task runner poethepoet
-        run: poetry self add 'poethepoet[poetry_plugin]'
-
       - name: Test the library
         run: poetry task check-all
