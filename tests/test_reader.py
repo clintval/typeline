@@ -251,9 +251,9 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
     class SimpleListReader(CsvStructReader[RecordType]):
         @override
         @staticmethod
-        def _decode(record_type: type[Any] | str | Any, item: Any) -> Any:
+        def _decode(field_type: type[Any] | str | Any, item: Any) -> Any:
             """A callback for overriding the decoding of builtin types and custom types."""
-            if get_origin(record_type) is list:
+            if get_origin(field_type) is list:
                 stripped: str = item.rstrip(",")
                 return f"[{stripped}]"
             return item

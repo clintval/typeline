@@ -73,8 +73,7 @@ class DelimitedStructWriter(
         self.close()
         return None
 
-    @staticmethod
-    def _encode(item: Any) -> Any:
+    def _encode(self, item: Any) -> Any:
         """A callback for overriding the encoding of builtin types and custom types."""
         if isinstance(item, tuple):
             return list(item)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]

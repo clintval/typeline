@@ -172,8 +172,7 @@ class DelimitedStructReader(
                     + f" Original exception: {exception}"
                 ) from exception
 
-    @staticmethod
-    def _decode(record_type: type[Any] | str | Any, item: Any) -> Any:  # noqa: ARG004  # pyright: ignore[reportUnusedParameter]
+    def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:  # noqa: ARG002  # pyright: ignore[reportUnusedParameter]
         """A callback for overriding the decoding of builtin types and custom types."""
         return item
 
