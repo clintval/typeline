@@ -19,7 +19,7 @@ pip install typeline
 
 ## Quickstart
 
-### Building a BED Feature
+### Building a Test Dataclass
 
 ```python
 from dataclasses import dataclass
