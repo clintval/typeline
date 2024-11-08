@@ -99,7 +99,7 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
         """Write the record to the open file-like object."""
         assert is_dataclass(record), "record is not a dataclass but must be!"
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
-        builtin = to_builtins(encoded, order="deterministic", str_keys=True)
+        builtin = to_builtins(encoded, str_keys=True)
         self._writer.writerow(builtin)
         return None
 
@@ -247,31 +247,47 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             if not any(line.strip().startswith(char) for char in self.comment_chars):
                 yield line
 
+    def _value_to_builtin(self, name: str, value: str, field_type: type) -> Any:
+        type_args: tuple[type] | None = get_args(field_type)
+        type_origin: type | None = get_origin(field_type)
+        is_union: bool = type(field_type) is UnionType
+
+        if value is None:
+            return f'"{name}":null'
+        elif value == "" and is_union and NoneType in type_args:
+            return f'"{name}":null'
+        elif field_type is bool or (is_union and bool in type_args):
+            return f'"{name}":{value.lower()}'
+        elif field_type is int or (is_union and int in type_args):
+            return f'"{name}":{value}'
+        elif field_type is float or (is_union and float in type_args):
+            return f'"{name}":{value}'
+        elif field_type is str or (is_union and str in type_args):
+            return f'"{name}":"{value}"'
+        elif type_origin in (list, set, tuple):
+            return f'"{name}":{value}'
+        elif type_origin in (dict,):
+            return f'"{name}":{list(value.items())}'
+        elif is_union and len(type_args) == 2 and NoneType in type_args:
+            other_type = next(iter(set(type_args) - {NoneType}))
+            return self._value_to_builtin(name, value, other_type)
+        else:
+            raise NotImplementedError(f"Type {field_type} is not supported!")
+
     def _csv_dict_to_json(self, record: dict[str, str]) -> JsonType:
         """Build a list of builtin-like objects from a string-only dictionary."""
         key_values: list[str] = []
 
         for (name, value), field_type in zip(record.items(), self._types, strict=True):
             decoded: Any = self._decode(cast(type, field_type), value)
-            type_args: tuple[type] | None = get_args(field_type)
-            is_union: bool = type(field_type) is UnionType
 
-            if decoded is None:
-                key_values.append(f'"{name}":null')
-            elif decoded == "" and is_union and NoneType in type_args:
-                key_values.append(f'"{name}":null')
-            elif field_type is bool or (is_union and bool in type_args):
-                key_values.append(f'"{name}":{decoded.lower()}')
-            elif field_type is int or (is_union and int in type_args):
-                key_values.append(f'"{name}":{decoded}')
-            elif field_type is float or (is_union and float in type_args):
-                key_values.append(f'"{name}":{decoded}')
-            elif field_type is str or (is_union and str in type_args):
-                key_values.append(f'"{name}":"{decoded}"')
-            elif get_origin(field_type) in (list, set, tuple):
-                key_values.append(f'"{name}":[{decoded.rstrip(",")}]')
-            else:
-                raise NotImplementedError(f"Type {field_type} is not supported!")
+            key_value = self._value_to_builtin(name, decoded, field_type)
+
+            key_value = key_value.replace("\t", "\\t")
+            key_value = key_value.replace("\r", "\\r")
+            key_value = key_value.replace("\n", "\\n")
+
+            key_values.append(key_value)
 
         as_builtins: JsonType = json.loads(f"{{{','.join(key_values)}}}")
 

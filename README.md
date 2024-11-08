@@ -25,7 +25,7 @@ pip install typeline
 from dataclasses import dataclass
 
 @dataclass
-class MyRecord:
+class MyData:
     field1: int
     field2: str
     field3: float | None
@@ -36,9 +36,10 @@ class MyRecord:
 ```python
 from typeline import TsvStructWriter
 
-with TsvStructWriter.from_path("test.tsv") as writer:
-    writer.write(MyRecord(10, "test1", 0.2))
-    writer.write(MyRecord(20, "test2", None))
+with TsvStructWriter.from_path("test.tsv", MyData) as writer:
+    writer.writeheader()
+    writer.write(MyData(10, "test1", 0.2))
+    writer.write(MyData(20, "test2", None))
 ```
 
 ### Reading
@@ -46,13 +47,13 @@ with TsvStructWriter.from_path("test.tsv") as writer:
 ```python
 from typeline import TsvStructReader
 
-with TsvStructReader.from_path("test.tsv") as reader:
+with TsvStructReader.from_path("test.tsv", MyData) as reader:
     for record in reader:
         print(record)
 ```
 ```console
-MyRecord(field1=10, field2="test1", field3=0.2)
-MyRecord(field1=20, field2="test2", field3=None)
+MyData(field1=10, field2='test1', field3=0.2)
+MyData(field1=20, field2='test2', field3=None)
 ```
 
 ## Development and Testing
