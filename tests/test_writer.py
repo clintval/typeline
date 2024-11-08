@@ -1,8 +1,12 @@
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
+from typing_extensions import override
 
 from typeline import CsvStructWriter
+from typeline import RecordType
 from typeline import TsvStructWriter
 
 from .conftest import ComplexMetric
@@ -110,3 +114,27 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
         "null",
         "0.2\n",
     ])
+
+
+def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
+    """Test we can implement a writer with a custom encode callback."""
+
+    @dataclass
+    class MyMetric:
+        field1: float
+        field2: list[int]
+
+    class SimpleListWriter(CsvStructWriter[RecordType]):
+        @override
+        @staticmethod
+        def _encode(item: Any) -> Any:
+            """A callback for overriding the encoding of builtin types and custom types."""
+            print(item)
+            if isinstance(item, list):
+                return ",".join(map(str, item))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            return item
+
+    with SimpleListWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
+        writer.write(MyMetric(0.1, [1, 2, 3]))
+
+    assert (tmp_path / "test.txt").read_text() == "0.1,'1,2,3'\n"
