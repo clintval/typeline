@@ -15,6 +15,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: File Formats",
@@ -25,12 +26,11 @@ classifiers = [
 include = ["CONTRIBUTING.md", "LICENSE"]
 
 [tool.poetry.dependencies]
-python = "^3.11.0"
+python = "^3.10.0"
 msgspec = "^0.18"
 typing-extensions = "^4.12"
 
 [tool.poetry.dev-dependencies]
-# TODO: satisfy basedpyright warnings and errors and add to CI?
 basedpyright = "^1.21"
 mypy = "^1.13"
 pytest = "^8.3"
@@ -40,7 +40,7 @@ pytest-doctestplus = "^1.2.1"
 ruff = "0.7.1"
 
 [build-system]
-requires = ["poetry-core>=1.8", "setuptools>=70.1.1", "Cython>=3.0.10"]
+requires = ["poetry-core>=1.8", "setuptools>=70.1.1"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poe]
@@ -56,11 +56,13 @@ fix-all.sequence    = [
     "fix-lint"
 ]
 
-check-lock   = "poetry check --lock"
-check-format = "ruff format --check --diff"
-check-lint   = "ruff check"
-check-tests  = "pytest"
-check-typing = "mypy"
+check-lock     = "poetry check --lock"
+check-format   = "ruff format --check --diff"
+check-lint     = "ruff check"
+check-tests    = "pytest"
+_check-mypy    = "mypy"
+_check-pyright = "basedpyright"
+check-typing.sequence = ["_check-mypy", "_check-pyright"]
 
 check-all.ignore_fail = true
 check-all.sequence    = [
@@ -94,6 +96,11 @@ warn_unreachable            = true
 warn_unused_configs         = true
 warn_unused_ignores         = true
 enable_error_code           = "ignore-without-code"
+
+[tool.pyright]
+include = ["typeline/"]
+reportAny = false
+pythonVersion = "3.11"
 
 [tool.pytest.ini_options]
 minversion = "7.4"

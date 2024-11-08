@@ -44,7 +44,7 @@ def test_writer_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
         """A test metric."""
 
     with pytest.raises(AssertionError, match="record_type is not a dataclass but must be!"):
-        CsvStructWriter.from_path(tmp_path / "test.txt", MyTest)
+        CsvStructWriter.from_path(tmp_path / "test.txt", MyTest)  # type: ignore[type-var]
 
 
 def test_csv_writer_is_set_to_use_comma(tmp_path: Path) -> None:
@@ -203,7 +203,7 @@ def test_reader_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
     (tmp_path / "test.txt").touch()
 
     with pytest.raises(AssertionError, match="record_type is not a dataclass but must be!"):
-        CsvStructReader.from_path(tmp_path / "test.txt", MyTest)
+        CsvStructReader.from_path(tmp_path / "test.txt", MyTest)  # type: ignore[type-var]
 
 
 def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:

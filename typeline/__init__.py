@@ -1,7 +1,16 @@
 # ruff: noqa: F401
-from ._typeline import CsvStructReader
-from ._typeline import CsvStructWriter
-from ._typeline import DelimitedStructReader
-from ._typeline import DelimitedStructWriter
-from ._typeline import TsvStructReader
-from ._typeline import TsvStructWriter
+from ._reader import CsvStructReader
+from ._reader import DelimitedStructReader
+from ._reader import TsvStructReader
+from ._writer import CsvStructWriter
+from ._writer import DelimitedStructWriter
+from ._writer import TsvStructWriter
+
+__all__ = [
+    "CsvStructReader",
+    "DelimitedStructReader",
+    "TsvStructReader",
+    "CsvStructWriter",
+    "DelimitedStructWriter",
+    "TsvStructWriter",
+]
