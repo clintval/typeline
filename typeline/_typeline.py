@@ -1,5 +1,6 @@
 import csv
 import json
+from abc import ABC
 from csv import DictReader
 from csv import DictWriter
 from dataclasses import Field
@@ -7,7 +8,6 @@ from dataclasses import fields as fields_of
 from dataclasses import is_dataclass
 from io import TextIOWrapper
 from pathlib import Path
-from types import GenericAlias
 from types import NoneType
 from types import TracebackType
 from types import UnionType
@@ -45,7 +45,7 @@ RecordType = TypeVar("RecordType", bound=DataclassInstance)
 """A type variable for the type of record (of dataclass type) for reading and writing."""
 
 
-class DelimitedStructWriter(ContextManager, Generic[RecordType]):
+class DelimitedStructWriter(ContextManager, Generic[RecordType], ABC):
     """
     A writer for writing dataclasses into delimited data.
 
@@ -55,19 +55,15 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
 
     delimiter: str
 
-    def __init__(
-        self, handle: TextIOWrapper, record_type: type[RecordType], /, delimiter: str
-    ) -> None:
+    def __init__(self, handle: TextIOWrapper, record_type: type[RecordType]) -> None:
         """
         Instantiate a new delimited struct writer.
 
         Args:
             handle: a file-like object to write records to.
             record_type: the type of the object we will be writing.
-            delimiter: the field delimiter in the output delimited data.
         """
         assert is_dataclass(record_type), "record_type is not a dataclass but must be!"
-        self.delimiter = delimiter
         self._record_type = record_type
         self._handle = handle
         self._fields = fields_of(record_type)
@@ -79,6 +75,17 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
+
+    def __init_subclass__(cls, delimiter: str, **kwargs: Any) -> None:
+        """
+        Initialize all subclasses by setting the delimiter.
+
+        Args:
+            delimiter: the field delimiter in the output delimited data.
+            kwargs: any other key-word arguments.
+        """
+        super().__init_subclass__(**kwargs)
+        cls.delimiter = delimiter
 
     @override
     def __enter__(self) -> Self:
@@ -125,13 +132,13 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
         return None
 
     @classmethod
-    def from_path(cls, path: Path | str, record_type: type[RecordType], /, delimiter: str) -> Self:
+    def from_path(cls, path: Path | str, record_type: type[RecordType]) -> Self:
         """Construct a delimited struct writer from a file path."""
-        writer = cls(Path(path).open("w"), record_type, delimiter=delimiter)
+        writer = cls(Path(path).open("w"), record_type)
         return writer
 
 
-class CsvStructWriter(DelimitedStructWriter):
+class CsvStructWriter(DelimitedStructWriter, delimiter=","):
     """
     A writer for writing dataclasses into comma-delimited data.
 
@@ -139,30 +146,8 @@ class CsvStructWriter(DelimitedStructWriter):
         delimiter: the field delimiter in the output delimited data.
     """
 
-    @override
-    def __init__(
-        self, handle: TextIOWrapper, record_type: type[RecordType], /, delimiter: str = ","
-    ):
-        """
-        Instantiate a new delimited struct writer.
 
-        Args:
-            handle: a file-like object to write records to.
-            record_type: the type of the object we will be writing.
-            delimiter: the field delimiter in the output delimited data.
-        """
-        super().__init__(handle, record_type, delimiter=delimiter)
-
-    @override
-    @classmethod
-    def from_path(
-        cls, path: Path | str, record_type: type[RecordType], /, delimiter: str = ","
-    ) -> Self:
-        """Construct a delimited struct writer from a file path."""
-        return super().from_path(path, record_type, delimiter=delimiter)
-
-
-class TsvStructWriter(DelimitedStructWriter):
+class TsvStructWriter(DelimitedStructWriter, delimiter="\t"):
     """
     A writer for writing dataclasses into tab-delimited data.
 
@@ -170,30 +155,8 @@ class TsvStructWriter(DelimitedStructWriter):
         delimiter: the field delimiter in the output delimited data.
     """
 
-    @override
-    def __init__(
-        self, handle: TextIOWrapper, record_type: type[RecordType], /, delimiter: str = "\t"
-    ):
-        """
-        Instantiate a new delimited struct writer.
 
-        Args:
-            handle: a file-like object to write records to.
-            record_type: the type of the object we will be writing.
-            delimiter: the field delimiter in the output delimited data.
-        """
-        super().__init__(handle, record_type, delimiter=delimiter)
-
-    @override
-    @classmethod
-    def from_path(
-        cls, path: Path | str, record_type: type[RecordType], /, delimiter: str = "\t"
-    ) -> Self:
-        """Construct a delimited struct writer from a file path."""
-        return super().from_path(path, record_type, delimiter=delimiter)
-
-
-class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[RecordType]):
+class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[RecordType], ABC):
     """
     A reader for reading delimited data into dataclasses.
 
@@ -210,7 +173,6 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
         handle: TextIOWrapper,
         record_type: type[RecordType],
         /,
-        delimiter: str,
         has_header: bool = True,
     ):
         """
@@ -219,11 +181,9 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
         Args:
             handle: a file-like object to read records from.
             record_type: the type of the object we will be writing.
-            delimiter: the field delimiter in the input delimited data.
             has_header: whether we expect the first line to be a header or not.
         """
         assert is_dataclass(record_type), "record_type is not a dataclass but must be!"
-        self.delimiter = delimiter
         self.comment_chars = {"#"}
         self._record_type = record_type
         self._handle = handle
@@ -237,6 +197,17 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
+
+    def __init_subclass__(cls, delimiter: str, **kwargs: Any) -> None:
+        """
+        Initialize all subclasses by setting the delimiter.
+
+        Args:
+            delimiter: the field delimiter in the output delimited data.
+            kwargs: any other key-word arguments.
+        """
+        super().__init_subclass__(**kwargs)
+        cls.delimiter = delimiter
 
     @override
     def __enter__(self) -> Self:
@@ -257,7 +228,8 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
     def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
         """Yield only lines in an iterator that do not start with a comment character."""
         for line in lines:
-            if not any(line.strip().startswith(char) for char in self.comment_chars):
+            stripped: str = line.strip()
+            if stripped and not any(stripped.startswith(char) for char in self.comment_chars):
                 yield line
 
     def _value_to_builtin(self, name: str, value: str, field_type: type | str | Any) -> Any:
@@ -330,15 +302,14 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
         path: Path | str,
         record_type: type[RecordType],
         /,
-        delimiter: str,
         has_header: bool = True,
     ) -> Self:
         """Construct a delimited struct reader from a file path."""
-        reader = cls(Path(path).open("r"), record_type, delimiter=delimiter, has_header=has_header)
+        reader = cls(Path(path).open("r"), record_type, has_header=has_header)
         return reader
 
 
-class CsvStructReader(DelimitedStructReader):
+class CsvStructReader(DelimitedStructReader, delimiter=","):
     """
     A reader for reading comma-delimited data into dataclasses.
 
@@ -347,41 +318,8 @@ class CsvStructReader(DelimitedStructReader):
         comment_chars: any characters that when one prefixes a line marks it as a comment.
     """
 
-    @override
-    def __init__(
-        self,
-        handle: TextIOWrapper,
-        record_type: type[RecordType],
-        /,
-        delimiter: str = ",",
-        has_header: bool = True,
-    ):
-        """
-        Instantiate a new delimited struct reader.
 
-        Args:
-            handle: a file-like object to read records from.
-            record_type: the type of the object we will be writing.
-            delimiter: the field delimiter in the input delimited data.
-            has_header: whether we expect the first line to be a header or not.
-        """
-        super().__init__(handle, record_type, delimiter=delimiter, has_header=has_header)
-
-    @override
-    @classmethod
-    def from_path(
-        cls,
-        path: Path | str,
-        record_type: type[RecordType],
-        /,
-        delimiter: str = ",",
-        has_header: bool = True,
-    ) -> Self:
-        """Construct a delimited struct reader from a file path."""
-        return super().from_path(path, record_type, delimiter=delimiter, has_header=has_header)
-
-
-class TsvStructReader(DelimitedStructReader):
+class TsvStructReader(DelimitedStructReader, delimiter="\t"):
     """
     A reader for reading tab-delimited data into dataclasses.
 
@@ -389,36 +327,3 @@ class TsvStructReader(DelimitedStructReader):
         delimiter: the field delimiter in the input delimited data.
         comment_chars: any characters that when one prefixes a line marks it as a comment.
     """
-
-    @override
-    def __init__(
-        self,
-        handle: TextIOWrapper,
-        record_type: type[RecordType],
-        /,
-        delimiter: str = "\t",
-        has_header: bool = True,
-    ):
-        """
-        Instantiate a new delimited struct reader.
-
-        Args:
-            handle: a file-like object to read records from.
-            record_type: the type of the object we will be writing.
-            delimiter: the field delimiter in the input delimited data.
-            has_header: whether we expect the first line to be a header or not.
-        """
-        super().__init__(handle, record_type, delimiter=delimiter, has_header=has_header)
-
-    @override
-    @classmethod
-    def from_path(
-        cls,
-        path: Path | str,
-        record_type: type[RecordType],
-        /,
-        delimiter: str = "\t",
-        has_header: bool = True,
-    ) -> Self:
-        """Construct a delimited struct reader from a file path."""
-        return super().from_path(path, record_type, delimiter=delimiter, has_header=has_header)
