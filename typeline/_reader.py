@@ -52,6 +52,7 @@ class DelimitedStructReader(
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
+
         self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -64,6 +65,7 @@ class DelimitedStructReader(
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
+
         if self._reader.fieldnames is not None and set(self._reader.fieldnames) != set(
             self._header
         ):

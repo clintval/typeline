@@ -38,6 +38,7 @@ class DelimitedStructWriter(
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
+
         self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -86,12 +87,14 @@ class DelimitedStructWriter(
                 f"Expected {self._record_type.__name__} but found"
                 + f" {record.__class__.__qualname__}!"
             )
+
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
         builtin = {
             name: (json.dumps(value) if not isinstance(value, str) else value)
             for name, value in cast(dict[str, Any], to_builtins(encoded, str_keys=True)).items()
         }
         self._writer.writerow(builtin)
+
         return None
 
     def write_header(self) -> None:
