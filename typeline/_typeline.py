@@ -283,11 +283,14 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
         for record in self._reader:
-            yield convert(
-                self._csv_dict_to_json(record),
-                self._record_type,
-                strict=False,
-            )
+            as_builtins = self._csv_dict_to_json(record)
+            try:
+                yield convert(as_builtins, self._record_type, strict=False)
+            except ValueError as exception:
+                raise ValueError(
+                    f"Could not parse {record} as {self._record_type.__name__}!"
+                    f" Intermediate structure formed is: {as_builtins}"
+                ) from exception
 
     @staticmethod
     def _decode(_: type[Any] | str | Any, item: Any) -> Any:
