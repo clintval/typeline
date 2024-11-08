@@ -1,3 +1,4 @@
+import csv
 import json
 from csv import DictReader
 from csv import DictWriter
@@ -71,7 +72,11 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
         self._fields = fields_of(record_type)
         self._header = [field.name for field in fields_of(record_type)]
         self._writer = DictWriter(
-            handle, fieldnames=self._header, delimiter=self.delimiter, quotechar='"'
+            handle,
+            fieldnames=self._header,
+            delimiter=self.delimiter,
+            quotechar='\'',
+            quoting=csv.QUOTE_MINIMAL,
         )
 
     @override
@@ -93,13 +98,18 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType]):
     @staticmethod
     def _encode(item: Any) -> Any:
         """A callback for overriding the encoding of builtin types and custom types."""
+        if isinstance(item, tuple):
+            return list(item)
         return item
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object."""
         assert is_dataclass(record), "record is not a dataclass but must be!"
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
-        builtin = to_builtins(encoded, str_keys=True)
+        builtin = {
+            name: (json.dumps(value) if not isinstance(value, str) else value)
+            for name, value  in to_builtins(encoded, str_keys=True).items()
+        }
         self._writer.writerow(builtin)
         return None
 
@@ -223,6 +233,8 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             self._filter_out_comments(handle),
             fieldnames=self._header if not has_header else None,
             delimiter=self.delimiter,
+            quotechar="'",
+            quoting=csv.QUOTE_MINIMAL,
         )
 
     @override
@@ -250,7 +262,7 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
     def _value_to_builtin(self, name: str, value: str, field_type: type) -> Any:
         type_args: tuple[type] | None = get_args(field_type)
         type_origin: type | None = get_origin(field_type)
-        is_union: bool = type(field_type) is UnionType
+        is_union: bool = isinstance(field_type, UnionType)
 
         if value is None:
             return f'"{name}":null'
@@ -266,13 +278,13 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             return f'"{name}":"{value}"'
         elif type_origin in (list, set, tuple):
             return f'"{name}":{value}'
-        elif type_origin in (dict,):
-            return f'"{name}":{list(value.items())}'
-        elif is_union and len(type_args) == 2 and NoneType in type_args:
+        elif is_union and type_args is not None and len(type_args) == 2 and NoneType in type_args:
             other_type = next(iter(set(type_args) - {NoneType}))
             return self._value_to_builtin(name, value, other_type)
+        elif type_origin in (dict,):
+            raise NotImplementedError(f"Dictionary types ({field_type}) are not supported!")
         else:
-            raise NotImplementedError(f"Type {field_type} is not supported!")
+            return f'"{name}":{value}'
 
     def _csv_dict_to_json(self, record: dict[str, str]) -> JsonType:
         """Build a list of builtin-like objects from a string-only dictionary."""
