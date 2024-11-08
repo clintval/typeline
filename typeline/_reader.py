@@ -34,11 +34,7 @@ class DelimitedStructReader(
     Generic[RecordType],
     ABC,
 ):
-    """A reader for reading delimited data into dataclasses.
-
-    Attributes:
-        comment_prefixes: any string that when one prefixes a line, marks it as a comment.
-    """
+    """A reader for reading delimited data into dataclasses."""
 
     def __init__(
         self,
@@ -56,7 +52,6 @@ class DelimitedStructReader(
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
-        self.comment_prefixes: set[str] = {"#"}
         self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -179,6 +174,11 @@ class DelimitedStructReader(
         """A callback for overriding the decoding of builtin types and custom types."""
         return item
 
+    @property
+    def comment_prefixes(self) -> set[str]:
+        """Any string that when one prefixes a line, marks it as a comment."""
+        return {"#"}
+
     def close(self) -> None:
         """Close all opened resources."""
         self._handle.close()
@@ -199,9 +199,6 @@ class DelimitedStructReader(
 
 class CsvStructReader(DelimitedStructReader[RecordType]):
     r"""A reader for reading comma-delimited data into dataclasses.
-
-    Attributes:
-        comment_prefixes: any string that when one prefixes a line, marks it as a comment.
 
     Example:
         ```pycon
@@ -236,9 +233,6 @@ class CsvStructReader(DelimitedStructReader[RecordType]):
 
 class TsvStructReader(DelimitedStructReader[RecordType]):
     r"""A reader for reading tab-delimited data into dataclasses.
-
-    Attributes:
-        comment_prefixes: any string that when one prefixes a line, marks it as a comment.
 
     Example:
         ```pycon
