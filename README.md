@@ -8,9 +8,7 @@
 [![Poetry](https://img.shields.io/endpoint?url=https://python-poetry.org/badge/v0.json)](https://python-poetry.org/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://docs.astral.sh/ruff/)
 
-Write dataclasses to delimited text formats and read them back again.
-
-Features type-safe parsing, optional field support, and an intuitive API for working with structured data.
+Write dataclasses to delimited text formats and read them back again. Features type-safe parsing, optional field support, and an intuitive API for working with structured data.
 
 ## Installation
 
