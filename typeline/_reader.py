@@ -20,6 +20,7 @@ from typing import final
 from typing import get_args
 from typing import get_origin
 
+from msgspec import ValidationError
 from msgspec import convert
 from typing_extensions import Self
 from typing_extensions import override
@@ -164,11 +165,11 @@ class DelimitedStructReader(
             as_builtins = self._csv_dict_to_json(record)
             try:
                 yield convert(as_builtins, self._record_type, strict=False)
-            except ValueError as exception:
-                raise ValueError(
-                    f"Could not parse {record} as {self._record_type.__name__}!"
-                    + f" Intermediate structure formed is: {as_builtins}."
-                    + f" Original error: {exception}"
+            except ValidationError as exception:
+                raise ValidationError(
+                    f"Could not parse JSON-like object into requested structure: {as_builtins}."
+                    + f" Requested structure: {self._record_type.__name__}."
+                    + f" Original exception: {exception}"
                 ) from exception
 
     @staticmethod
