@@ -23,20 +23,20 @@ jobs:
           reference: "main"
           tag: "${{ github.ref_name }}"
 
-  tests:
-    name: tests
+  unit-tests:
+    name: unit-tests
     needs: on-main-branch-check
     if: ${{ needs.on-main-branch-check.outputs.on_main == 'true' }}
     uses: "./.github/workflows/tests.yml"
 
   build-wheels:
     name: build wheels
-    needs: tests
+    needs: unit-tests
     uses: "./.github/workflows/wheels.yml"
 
   build-sdist:
     name: build source distribution
-    needs: tests
+    needs: unit-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
