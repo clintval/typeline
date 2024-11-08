@@ -21,6 +21,7 @@ from typing import Protocol
 from typing import Self
 from typing import TypeAlias
 from typing import TypeVar
+from typing import Union
 from typing import get_args
 from typing import get_origin
 from typing import runtime_checkable
@@ -278,9 +279,9 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             return f'"{name}":"{value}"'
         elif type_origin in (dict, list, set, tuple):
             return f'"{name}":{value}'
-        elif is_union and len(type_args) == 2 and NoneType in type_args:
-            other_type: type = next(iter(set(type_args) - {NoneType}))
-            return self._value_to_builtin(name, value, other_type)
+        elif is_union and len(type_args) >= 2 and NoneType in type_args:
+            other_types: set[type] = set(type_args) - {NoneType}
+            return self._value_to_builtin(name, value, Union[other_types])
         else:
             return f'"{name}":{value}'
 
@@ -290,9 +291,6 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
 
         for (name, value), field_type in zip(record.items(), self._types, strict=True):
             decoded: Any = self._decode(field_type, value)
-
-            if not isinstance(field_type, (type, GenericAlias)):
-                raise TypeError("Input data without simple type annotations is not supported!")
 
             key_value = self._value_to_builtin(name, decoded, field_type)
 
