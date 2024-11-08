@@ -7,11 +7,11 @@ on:
 
 jobs:
   build-wheels:
-    name: Build wheels for ${{ matrix.python }}
+    name: Build wheels for ${{ matrix.PYTHON_VERSION }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ["3.10", "3.11", "3.12"]
+        PYTHON_VERSION: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +27,6 @@ jobs:
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: typeline-wheels-${{ matrix.python }}
+          name: typeline-wheels-${{ matrix.PYTHON_VERSION }}
           path: ./wheelhouse/typeline*.whl
           if-no-files-found: error
