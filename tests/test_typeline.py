@@ -41,11 +41,10 @@ def test_writer_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
     """Test that the writer will raise an exception for non-dataclasses."""
 
     class MyTest:
-        pass
+        """A test metric."""
 
     with pytest.raises(AssertionError, match="record_type is not a dataclass but must be!"):
-        with CsvStructWriter.from_path(tmp_path / "test.txt", MyTest) as _:
-            pass
+        CsvStructWriter.from_path(tmp_path / "test.txt", MyTest)
 
 
 def test_csv_writer_is_set_to_use_comma(tmp_path: Path) -> None:
@@ -199,13 +198,20 @@ def test_reader_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
     """Test that the reader will raise an exception for non-dataclasses."""
 
     class MyTest:
-        pass
+        """A test metric."""
 
     (tmp_path / "test.txt").touch()
 
     with pytest.raises(AssertionError, match="record_type is not a dataclass but must be!"):
-        with CsvStructReader.from_path(tmp_path / "test.txt", MyTest) as _:
-            pass
+        CsvStructReader.from_path(tmp_path / "test.txt", MyTest)
+
+
+def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
+    """Test that the reader will raise an exception when the header is wrong."""
+    (tmp_path / "test.txt").write_text("field10,field11,field13\n")
+
+    with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
+        CsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric)
 
 
 def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:

@@ -197,6 +197,8 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
+        if set(self._reader.fieldnames) != set(self._header):
+            raise ValueError("Fields of header do not match fields of dataclass!")
 
     def __init_subclass__(cls, delimiter: str, **kwargs: Any) -> None:
         """
