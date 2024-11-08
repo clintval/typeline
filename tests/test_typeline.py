@@ -34,6 +34,7 @@ class ComplexMetric:
     field9: dict[str, SimpleMetric] = field(kw_only=True)
     field10: bool | None = field(kw_only=True)
     field11: bool | None = field(kw_only=True)
+    field12: int | float | None = field(kw_only=True)
 
 
 def test_writer_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
@@ -116,6 +117,7 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
         },
         field10=True,
         field11=None,
+        field12=0.2,
     )
     with TsvStructWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
@@ -134,7 +136,8 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
             r'"second": {"field1": 3, "field2": "hi-all", "field3": 0.3}}',
         ]),
         "true",
-        "null\n",
+        "null",
+        "0.2\n",
     ])
 
 
@@ -234,6 +237,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
         },
         field10=True,
         field11=None,
+        field12=1,
     )
     with TsvStructWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
@@ -252,7 +256,8 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
             r'"second": {"field1": 3, "field2": "hi-all", "field3": 0.3}}',
         ]),
         "true",
-        "null\n",
+        "null",
+        "1\n",
     ])
 
     with TsvStructReader.from_path(
@@ -260,34 +265,30 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
     ) as reader:
         assert list(reader) == [metric]
 
+
 def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
     """Test that the CSV reader is set to use a comma."""
     with CsvStructWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.writeheader()
-        writer._handle.write("# this is a comment")
-        writer._handle.write("#and this is a comment too!")
+        writer._handle.write("# this is a comment\n")
+        writer._handle.write("#and this is a comment too!\n")
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
         writer._handle.write("\n")
         writer._handle.write("  \n")
         writer.write(SimpleMetric(field1=2, field2="name2", field3=0.3))
     assert (tmp_path / "test.txt").read_text() == "\n".join([
         "field1,field2,field3",
-        "1,name,0.2\n",
+        "# this is a comment",
+        "#and this is a comment too!",
+        "1,name,0.2",
+        "",
+        "  ",
         "2,name2,0.3\n",
     ])
 
     with CsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
-        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
-
-    with CsvStructWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
-        assert (tmp_path / "test.txt").read_text() == ""
-        writer.writeheader()
-        writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
-    assert (tmp_path / "test.txt").read_text() == "\n".join([
-        "field1,field2,field3",
-        "1,name,0.2\n",
-    ])
-
-    with CsvStructReader(open(tmp_path / "test.txt", "r"), SimpleMetric) as reader:
-        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
+        assert list(reader) == [
+            SimpleMetric(field1=1, field2="name", field3=0.2),
+            SimpleMetric(field1=2, field2="name2", field3=0.3),
+        ]
