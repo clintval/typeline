@@ -1,0 +1,201 @@
+[tool.poetry]
+name = "typeline"
+version = "0.1.0"
+description = "Write dataclasses to delimited text formats and read them back again."
+authors = ["Clint Valentine <valentine.clint@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/clintval/typeline"
+repository = "https://github.com/clintval/typeline"
+keywords = ["dataclass", "msgspec", "IO", "delimited", "CSV", "TSV"]
+include = ["CONTRIBUTING.md", "LICENSE"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: File Formats",
+    "Topic :: Software Development :: Documentation",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+
+[tool.poetry.dependencies]
+python = "^3.10.0,<4.0.0"
+msgspec = "^0.18,<1.0"
+typing-extensions = "^4.12,<5.0"
+
+[tool.poetry.dev-dependencies]
+basedpyright = "^1.21"
+mypy = "^1.13"
+pytest = "^8.3"
+pytest-cov = "^5.0"
+pytest-doctestplus = "^1.2"
+ruff = "^0.7"
+
+[build-system]
+requires = ["poetry-core>=1.8"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poe]
+poetry_command = "task"
+
+[tool.poe.tasks]
+fix-format = "ruff format"
+fix-lint   = "ruff check --fix"
+
+fix-all.ignore_fail = true
+fix-all.sequence    = [
+    "fix-format",
+    "fix-lint"
+]
+
+check-lock   = "poetry check --lock"
+check-format = "ruff format --check --diff"
+check-lint   = "ruff check"
+check-tests  = "pytest --doctest-glob='*.md'"
+
+_check-mypy    = "mypy"
+_check-pyright = "basedpyright"
+check-typing.sequence = [
+    "_check-mypy",
+    "_check-pyright"
+]
+
+check-all.ignore_fail = true
+check-all.sequence    = [
+    "check-lock",
+    "check-format",
+    "check-lint",
+    "check-tests",
+    "check-typing"
+]
+
+fix-and-check-all.ignore_fail = true
+fix-and-check-all.sequence    = [
+    "fix-all",
+    "check-all"
+]
+
+[tool.pytest.ini_options]
+minversion = "7.4"
+addopts    = [
+    "--color=yes",
+    "--cov-fail-under=80",
+    "--cov-report=term-missing",
+    "--cov",
+    "--cov=typeline",
+    "--doctest-modules",
+    "--doctest-plus",
+    "--import-mode=importlib",
+]
+doctest_plus = "enabled"
+doctest_optionflags = [
+    "ELLIPSIS",
+    "IGNORE_EXCEPTION_DETAIL",
+    "NORMALIZE_WHITESPACE",
+]
+
+[tool.mypy]
+files                       = ["typeline/", "tests/"]
+strict_optional             = false
+strict_equality             = true
+check_untyped_defs          = true
+disallow_incomplete_defs    = true
+disallow_untyped_calls      = true
+disallow_untyped_decorators = true
+disallow_untyped_defs       = true
+no_implicit_optional        = true
+warn_no_return              = true
+warn_redundant_casts        = true
+warn_return_any             = true
+warn_unreachable            = true
+warn_unused_configs         = true
+warn_unused_ignores         = true
+enable_error_code           = "ignore-without-code"
+
+[[tool.mypy.overrides]]
+module = ".conftest"
+ignore_missing_imports = true
+
+[tool.pyright]
+include = ["typeline/"]
+reportAny = false
+pythonVersion = "3.10"
+
+[tool.ruff]
+include        = ["typeline/**", "tests/**"]
+line-length    = 100
+target-version = "py310"
+output-format  = "full"
+preview        = true
+
+[tool.ruff.lint]
+select    = [
+    "ARG",   # Unused arguments
+    "C901",  # McCabe complexity
+    "B",     # bugbear
+    "D",     # pydocstyle (docstrings. We have the "google" convention enabled)
+    "D204",  # Blank line between class docstring and first (__init__) method
+    "D212",  # summary line should be located on the same line as opening quotes
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "I",     # isort
+    "N",     # PEP8 naming
+    "W",     # pycodestyle warnings
+    "Q"      # flake8-quotes
+]
+ignore    = [
+    "E203",
+    "E701",
+    "D213",  # Summary line should be located on the line after opening quote
+    "D100",  # missing docstring in public module
+    "D104",  # missing docstring in public package
+]
+unfixable = ["B"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.git-cliff.changelog]
+header = ""
+trim = true
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+    ## {{ group | upper_first }}
+    {% for commit in commits %}
+        - {{ commit.message | upper_first }} ({{ commit.id | truncate(length=8, end="") }})\
+    {% endfor %}
+{% endfor %}\n
+"""
+
+[tool.git-cliff.git]
+conventional_commits = true
+commit_parsers = [
+    { message = "^.+!:*", group = "Breaking"},
+    { message = "^security*", group = "Security"},
+    { message = "^feat*", group = "Features"},
+    { message = "^fix*", group = "Bug Fixes"},
+    { message = "^docs*", group = "Documentation"},
+    { message = "^perf*", group = "Performance"},
+    { message = "^refactor*", group = "Refactor"},
+    { message = "^style*", group = "Styling"},
+    { message = "^test*", group = "Testing"},
+    { message = "^chore\\(release\\):*", skip = true},
+    { message = "^chore*", group = "Miscellaneous Tasks"},
+    { body = ".*security", group = "Security"}
+]
+filter_commits = false
