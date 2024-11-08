@@ -113,6 +113,7 @@ class DelimitedStructWriter(ContextManager, Generic[RecordType], ABC):
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object."""
         assert is_dataclass(record), "record is not a dataclass but must be!"
+        assert isinstance(record, self._record_type), f"Expected {self._record_type.__name__}!"
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
         builtin = {
             name: (json.dumps(value) if not isinstance(value, str) else value)
@@ -251,7 +252,7 @@ class DelimitedStructReader(Iterable[RecordType], ContextManager, Generic[Record
             return f'"{name}":{value}'
         elif field_type is str or (is_union and str in type_args):
             return f'"{name}":"{value}"'
-        elif type_origin in (dict, list, set, tuple):
+        elif type_origin in (dict, frozenset, list, set, tuple):
             return f'"{name}":{value}'
         elif is_union and len(type_args) >= 2 and NoneType in type_args:
             other_types: set[type] = set(type_args) - {NoneType}
