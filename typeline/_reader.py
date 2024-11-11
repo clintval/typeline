@@ -104,8 +104,7 @@ class DelimitedStructReader(
                 continue
             elif any(stripped.startswith(prefix) for prefix in self.comment_prefixes):
                 continue
-            else:
-                yield line
+            yield line
 
     def _csv_dict_to_json(self, record: dict[str, str]) -> dict[str, JsonType]:
         """Build a list of builtin-like objects from a string-only dictionary."""
