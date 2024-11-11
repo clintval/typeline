@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -215,7 +216,7 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
     with (
         TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader,
         pytest.raises(
-            ValueError,
+            json.decoder.JSONDecodeError,
             match=(
                 r"Could not load delimited data line into JSON-like format\."
                 + r" Built improperly formatted JSON\:"

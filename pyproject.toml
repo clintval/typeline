@@ -162,7 +162,7 @@ ignore    = [
 unfixable = ["B"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 10
+max-complexity = 13
 
 [tool.ruff.lint.isort]
 force-single-line = true

@@ -98,27 +98,42 @@ class DelimitedStructReader(
         """Yield only lines in an iterator that do not start with a comment character."""
         for line in lines:
             stripped: str = line.strip()
-            if stripped and not any(stripped.startswith(char) for char in self.comment_prefixes):
+            if not stripped:
+                continue
+            elif any(stripped.startswith(prefix) for prefix in self.comment_prefixes):
+                continue
+            else:
                 yield line
 
     def _value_to_builtin(self, name: str, value: Any, field_type: type | str | Any) -> Any:
-        type_args: tuple[type, ...] = get_args(field_type)
-        type_origin: type | None = get_origin(field_type)
-        is_union: bool = isinstance(field_type, UnionType)
-
         if value is None:
             return f'"{name}":null'
+        elif field_type is str:
+            return f'"{name}":"{value}"'
+        elif field_type is int:
+            return f'"{name}":{value}'
+        elif field_type is float:
+            return f'"{name}":{value}'
+        elif field_type is bool:
+            return f'"{name}":{value.lower()}'
+
+        is_union: bool = isinstance(field_type, UnionType)
+        type_args: tuple[type, ...] = get_args(field_type)
+
+        if is_union and bool in type_args:
+            return f'"{name}":{value.lower()}'
+        elif is_union and int in type_args:
+            return f'"{name}":{value}'
+        elif is_union and float in type_args:
+            return f'"{name}":{value}'
+        elif is_union and str in type_args:
+            return f'"{name}":"{value}"'
         elif value == "" and is_union and NoneType in type_args:
             return f'"{name}":null'
-        elif field_type is bool or (is_union and bool in type_args):
-            return f'"{name}":{value.lower()}'
-        elif field_type is int or (is_union and int in type_args):
-            return f'"{name}":{value}'
-        elif field_type is float or (is_union and float in type_args):
-            return f'"{name}":{value}'
-        elif field_type is str or (is_union and str in type_args):
-            return f'"{name}":"{value}"'
-        elif type_origin in (dict, frozenset, list, set, tuple):
+
+        type_origin: type | None = get_origin(field_type)
+
+        if type_origin in (dict, frozenset, list, set, tuple):
             return f'"{name}":{value}'
         elif is_union and len(type_args) >= 2 and NoneType in type_args:
             other_types: set[type] = set(type_args) - {NoneType}
