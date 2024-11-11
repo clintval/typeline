@@ -220,9 +220,9 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
             match=(
                 r"Could not load delimited data line into JSON\-like format\."
                 + r" Built improperly formatted JSON\:"
-                + r" \{\"field3\"\:BOMB\,\"field1\"\:1\,\"field2\"\:\"name\"\}\."
+                + r" \{\"field1\"\:1\,\"field2\"\:\"name\"\,\"field3\"\:BOMB\}\."
                 + r" Originally formatted message\: JSON is malformed\:"
-                + r" invalid character \(byte 10\)\."
+                + r" invalid character \(byte \d\d\)\."
             ),
         ),
     ):

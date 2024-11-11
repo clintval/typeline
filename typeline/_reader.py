@@ -108,18 +108,16 @@ class DelimitedStructReader(
 
     def _csv_dict_to_json(self, record: dict[str, str]) -> dict[str, JsonType]:
         """Build a list of builtin-like objects from a string-only dictionary."""
-        items: dict[str, JsonType] = {}
+        items: list[str] = []
 
         for (name, item), field_type in zip(record.items(), self._types, strict=True):
-            item = item.replace("\t", "\\t")
-            item = item.replace("\r", "\\r")
-            item = item.replace("\n", "\\n")
-
             decoded: str = self._decode(field_type, item)
+            decoded = decoded.replace("\t", "\\t")
+            decoded = decoded.replace("\r", "\\r")
+            decoded = decoded.replace("\n", "\\n")
+            items.append(f'"{name}":{decoded}')
 
-            items[name] = decoded
-
-        json_string: str = f"{{{','.join({f'"{name}":{value}' for name, value in items.items()})}}}"
+        json_string: str = f"{{{','.join(items)}}}"
 
         try:
             as_builtins: dict[str, JsonType] = self._decoder.decode(json_string)
@@ -149,13 +147,9 @@ class DelimitedStructReader(
 
     def _decode(self, field_type: type[Any] | str | Any, item: Any) -> str:
         """A callback for overriding the decoding of builtin types and custom types."""
-        if item is None:
-            return "null"
-        elif field_type is str:
+        if field_type is str:
             return f'"{item}"'
-        elif field_type is int:
-            return f"{item}"
-        elif field_type is float:
+        elif field_type in (int, float):
             return f"{item}"
         elif field_type is bool:
             return f"{item}".lower()
