@@ -149,7 +149,7 @@ class DelimitedStructReader(
         """A callback for overriding the decoding of builtin types and custom types."""
         if field_type is str:
             return f'"{item}"'
-        elif field_type in (int, float):
+        elif field_type in (float, int):
             return f"{item}"
         elif field_type is bool:
             return f"{item}".lower()
