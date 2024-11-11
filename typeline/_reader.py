@@ -17,7 +17,6 @@ from typing import Any
 from typing import Generic
 from typing import final
 from typing import get_args
-from typing import get_origin
 
 from msgspec import DecodeError
 from msgspec import ValidationError
@@ -155,6 +154,10 @@ class DelimitedStructReader(
             return f"{item}".lower()
 
         is_union: bool = isinstance(field_type, UnionType)
+
+        if not is_union:
+            return f"{item}"
+
         type_args: tuple[type, ...] = get_args(field_type)
 
         if item == "" and is_union and NoneType in type_args:
@@ -167,16 +170,11 @@ class DelimitedStructReader(
             return f"{item}"
         elif is_union and bool in type_args:
             return f"{item}".lower()
-
-        type_origin: type | None = get_origin(field_type)
-
-        if type_origin in (dict, frozenset, list, set, tuple):
-            return f"{item}"
         elif is_union and len(type_args) >= 2 and NoneType in type_args:
             other_types: set[type] = set(type_args) - {NoneType}
             return self._decode(other_types, item)
-        else:
-            return f"{item}"
+
+        return f"{item}"
 
     @property
     def comment_prefixes(self) -> set[str]:
