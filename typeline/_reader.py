@@ -15,6 +15,7 @@ from types import TracebackType
 from types import UnionType
 from typing import Any
 from typing import Generic
+from typing import Union  # pyright: ignore[reportDeprecated]
 from typing import final
 from typing import get_args
 
@@ -160,19 +161,24 @@ class DelimitedStructReader(
 
         type_args: tuple[type, ...] = get_args(field_type)
 
-        if item == "" and is_union and NoneType in type_args:
-            return "null"
-        elif is_union and str in type_args:
+        if NoneType in type_args:
+            other_types: set[type]
+            if item == "":
+                return "null"
+            elif len(type_args) == 2:
+                other_types = set(type_args) - {NoneType}
+                return self._decode(next(iter(other_types)), item)
+            else:
+                other_types = set(type_args) - {NoneType}
+                return self._decode(Union[other_types], item)  # pyright: ignore[reportDeprecated]
+        elif str in type_args:
             return f'"{item}"'
-        elif is_union and int in type_args:
+        elif int in type_args:
             return f"{item}"
-        elif is_union and float in type_args:
+        elif float in type_args:
             return f"{item}"
-        elif is_union and bool in type_args:
+        elif bool in type_args:
             return f"{item}".lower()
-        elif is_union and len(type_args) >= 2 and NoneType in type_args:
-            other_types: set[type] = set(type_args) - {NoneType}
-            return self._decode(other_types, item)
 
         return f"{item}"
 
