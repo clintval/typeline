@@ -154,7 +154,9 @@ class DelimitedStructReader(
         elif field_type is bool:
             return f"{item}".lower()
 
-        if isinstance(field_type, UnionType):
+        if not isinstance(field_type, UnionType):
+            return f"{item}"
+        else:
             type_args: tuple[type, ...] = get_args(field_type)
 
             if NoneType in type_args:
