@@ -158,27 +158,25 @@ class DelimitedStructReader(
 
         if not is_union:
             return f"{item}"
+        else:
+            type_args: tuple[type, ...] = get_args(field_type)
 
-        type_args: tuple[type, ...] = get_args(field_type)
-
-        if NoneType in type_args:
-            other_types: set[type]
-            if item == "":
-                return "null"
-            elif len(type_args) == 2:
-                other_types = set(type_args) - {NoneType}
-                return self._decode(next(iter(other_types)), item)
-            else:
-                other_types = set(type_args) - {NoneType}
-                return self._decode(Union[other_types], item)  # pyright: ignore[reportDeprecated]
-        elif str in type_args:
-            return f'"{item}"'
-        elif int in type_args:
-            return f"{item}"
-        elif float in type_args:
-            return f"{item}"
-        elif bool in type_args:
-            return f"{item}".lower()
+            if NoneType in type_args:
+                other_types: set[type]
+                if item == "":
+                    return "null"
+                elif len(type_args) == 2:
+                    other_types = set(type_args) - {NoneType}
+                    return self._decode(next(iter(other_types)), item)
+                else:
+                    other_types = set(type_args) - {NoneType}
+                    return self._decode(Union[other_types], item)  # pyright: ignore[reportDeprecated]
+            elif str in type_args:
+                return f'"{item}"'
+            elif any(_type in type_args for _type in (float, int)):
+                return f"{item}"
+            elif bool in type_args:
+                return f"{item}".lower()
 
         return f"{item}"
 
