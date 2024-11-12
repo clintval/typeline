@@ -145,8 +145,8 @@ class DelimitedStructReader(
                     + f" Original exception: {exception}"
                 ) from exception
 
-    def _decode(self, field_type: type[Any] | str | Any, item: Any) -> str:
-        """A callback for overriding the decoding of builtin types and custom types."""
+    def _decode(self, field_type: type[Any] | str | Any, item: str) -> str:
+        """A callback for overriding the string formatting of builtin and custom types."""
         if field_type is str:
             return f'"{item}"'
         elif field_type in (float, int):
@@ -154,11 +154,7 @@ class DelimitedStructReader(
         elif field_type is bool:
             return f"{item}".lower()
 
-        is_union: bool = isinstance(field_type, UnionType)
-
-        if not is_union:
-            return f"{item}"
-        else:
+        if isinstance(field_type, UnionType):
             type_args: tuple[type, ...] = get_args(field_type)
 
             if NoneType in type_args:
