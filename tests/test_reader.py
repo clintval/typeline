@@ -4,6 +4,7 @@ from typing import Any
 from typing import get_origin
 
 import pytest
+from msgspec import DecodeError
 from msgspec import ValidationError
 from typing_extensions import override
 
@@ -215,13 +216,13 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
     with (
         TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader,
         pytest.raises(
-            ValueError,
+            DecodeError,
             match=(
-                r"Could not load delimited data line into JSON-like format\."
+                r"Could not load delimited data line into JSON\-like format\."
                 + r" Built improperly formatted JSON\:"
-                + r' \{"field1"\:1,"field2"\:"name","field3"\:BOMB}\.'
-                + r" Originally formatted message\:"
-                + r" Expecting value\.\: line 1 column 38 \(char 37\)"
+                + r" \{\"field1\"\:1\,\"field2\"\:\"name\"\,\"field3\"\:BOMB\}\."
+                + r" Originally formatted message\: JSON is malformed\:"
+                + r" invalid character \(byte \d\d\)\."
             ),
         ),
     ):
@@ -275,10 +276,10 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
         with pytest.raises(
             ValidationError,
             match=(
-                r"Could not parse JSON-like object into requested structure:"
-                + r" \{'field1'\: 'my-name', 'field2': None\}."
-                + r" Requested structure: MyData. Original exception:"
-                + r" Expected \`array\`, got \`null\` - at \`\$.field2\`"
+                r"Could not parse JSON\-like object into requested structure\:"
+                + r" \[\(\'field1\'\, \'my-name\'\)\, \(\'field2\'\, None\)\]\."
+                + r" Requested structure\: MyData. Original exception\:"
+                + r" Expected \`array\`\, got \`null\` \- at \`\$\.field2\`"
             ),
         ):
             list(reader)

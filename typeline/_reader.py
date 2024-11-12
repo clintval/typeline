@@ -1,5 +1,4 @@
 import csv
-import json
 from abc import ABC
 from abc import abstractmethod
 from collections.abc import Iterable
@@ -16,12 +15,14 @@ from types import TracebackType
 from types import UnionType
 from typing import Any
 from typing import Generic
+from typing import Union  # pyright: ignore[reportDeprecated]
 from typing import final
 from typing import get_args
-from typing import get_origin
 
+from msgspec import DecodeError
 from msgspec import ValidationError
 from msgspec import convert
+from msgspec.json import Decoder as JSONDecoder
 from typing_extensions import Self
 from typing_extensions import override
 
@@ -54,6 +55,7 @@ class DelimitedStructReader(
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
 
+        self._decoder: JSONDecoder[Any] = JSONDecoder(strict=False)
         self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -98,62 +100,32 @@ class DelimitedStructReader(
         """Yield only lines in an iterator that do not start with a comment character."""
         for line in lines:
             stripped: str = line.strip()
-            if stripped and not any(stripped.startswith(char) for char in self.comment_prefixes):
-                yield line
+            if not stripped:
+                continue
+            elif any(stripped.startswith(prefix) for prefix in self.comment_prefixes):
+                continue
+            yield line
 
-    def _value_to_builtin(self, name: str, value: Any, field_type: type | str | Any) -> Any:
-        type_args: tuple[type, ...] = get_args(field_type)
-        type_origin: type | None = get_origin(field_type)
-        is_union: bool = isinstance(field_type, UnionType)
-
-        if value is None:
-            return f'"{name}":null'
-        elif value == "" and is_union and NoneType in type_args:
-            return f'"{name}":null'
-        elif field_type is bool or (is_union and bool in type_args):
-            return f'"{name}":{value.lower()}'
-        elif field_type is int or (is_union and int in type_args):
-            return f'"{name}":{value}'
-        elif field_type is float or (is_union and float in type_args):
-            return f'"{name}":{value}'
-        elif field_type is str or (is_union and str in type_args):
-            return f'"{name}":"{value}"'
-        elif type_origin in (dict, frozenset, list, set, tuple):
-            return f'"{name}":{value}'
-        elif is_union and len(type_args) >= 2 and NoneType in type_args:
-            other_types: set[type] = set(type_args) - {NoneType}
-            return self._value_to_builtin(name, value, other_types)
-        else:
-            return f'"{name}":{value}'
-
-    def _csv_dict_to_json(self, record: dict[str, str]) -> JsonType:
+    def _csv_dict_to_json(self, record: dict[str, str]) -> dict[str, JsonType]:
         """Build a list of builtin-like objects from a string-only dictionary."""
-        key_values: list[str] = []
+        items: list[str] = []
 
-        for (name, value), field_type in zip(record.items(), self._types, strict=True):
-            decoded: Any = self._decode(field_type, value)
+        for (name, item), field_type in zip(record.items(), self._types, strict=True):
+            decoded: str = self._decode(field_type, item)
+            decoded = decoded.replace("\t", "\\t")
+            decoded = decoded.replace("\r", "\\r")
+            decoded = decoded.replace("\n", "\\n")
+            items.append(f'"{name}":{decoded}')
 
-            key_value = self._value_to_builtin(name, decoded, field_type)
-
-            key_value = key_value.replace("\t", "\\t")
-            key_value = key_value.replace("\r", "\\r")
-            key_value = key_value.replace("\n", "\\n")
-
-            key_values.append(key_value)
-
-        json_string: str = f"{{{','.join(key_values)}}}"
+        json_string: str = f"{{{','.join(items)}}}"
 
         try:
-            as_builtins: JsonType = json.loads(json_string)
-        except json.decoder.JSONDecodeError as exception:
-            raise json.decoder.JSONDecodeError(
-                msg=(
-                    "Could not load delimited data line into JSON-like format."
-                    + f" Built improperly formatted JSON: {json_string}."
-                    + f" Originally formatted message: {exception.msg}."
-                ),
-                doc=exception.doc,
-                pos=exception.pos,
+            as_builtins: dict[str, JsonType] = self._decoder.decode(json_string)
+        except DecodeError as exception:
+            raise DecodeError(
+                "Could not load delimited data line into JSON-like format."
+                + f" Built improperly formatted JSON: {json_string}."
+                + f" Originally formatted message: {exception}."
             ) from exception
 
         return as_builtins
@@ -167,14 +139,44 @@ class DelimitedStructReader(
                 yield convert(as_builtins, self._record_type, strict=False)
             except ValidationError as exception:
                 raise ValidationError(
-                    f"Could not parse JSON-like object into requested structure: {as_builtins}."
+                    "Could not parse JSON-like object into requested structure:"
+                    + f" {sorted(as_builtins.items())}."
                     + f" Requested structure: {self._record_type.__name__}."
                     + f" Original exception: {exception}"
                 ) from exception
 
-    def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:  # noqa: ARG002  # pyright: ignore[reportUnusedParameter]
-        """A callback for overriding the decoding of builtin types and custom types."""
-        return item
+    def _decode(self, field_type: type[Any] | str | Any, item: str) -> str:
+        """A callback for overriding the string formatting of builtin and custom types."""
+        if field_type is str:
+            return f'"{item}"'
+        elif field_type in (float, int):
+            return f"{item}"
+        elif field_type is bool:
+            return f"{item}".lower()
+
+        if not isinstance(field_type, UnionType):
+            return f"{item}"
+        else:
+            type_args: tuple[type, ...] = get_args(field_type)
+
+            if NoneType in type_args:
+                other_types: set[type]
+                if item == "":
+                    return "null"
+                elif len(type_args) == 2:
+                    other_types = set(type_args) - {NoneType}
+                    return self._decode(next(iter(other_types)), item)
+                else:
+                    other_types = set(type_args) - {NoneType}
+                    return self._decode(Union[other_types], item)  # pyright: ignore[reportDeprecated]
+            elif str in type_args:
+                return f'"{item}"'
+            elif any(_type in type_args for _type in (float, int)):
+                return f"{item}"
+            elif bool in type_args:
+                return f"{item}".lower()
+
+        return f"{item}"
 
     @property
     def comment_prefixes(self) -> set[str]:

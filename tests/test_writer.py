@@ -125,8 +125,7 @@ def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
 
     class SimpleListWriter(CsvStructWriter[RecordType]):
         @override
-        @staticmethod
-        def _encode(item: Any) -> Any:
+        def _encode(self, item: Any) -> Any:
             """A callback for overriding the encoding of builtin types and custom types."""
             if isinstance(item, list):
                 return ",".join(map(str, item))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
