@@ -5,6 +5,9 @@ from typing import ClassVar
 from typing import Protocol
 from typing import TypeAlias
 from typing import TypeVar
+from typing import (  # type: ignore[attr-defined]
+    _UnionGenericAlias,  # pyright: ignore[reportAttributeAccessIssue,reportUnknownVariableType]
+)
 from typing import cast
 
 
@@ -29,3 +32,8 @@ def build_union(*types: type) -> type | UnionType:
     for t in types[1:]:
         union |= t
     return cast(UnionType, union)
+
+
+def is_union(_type: type | str | Any) -> bool:
+    """Return if this type is a union of types or not."""
+    return isinstance(_type, (UnionType, _UnionGenericAlias))
