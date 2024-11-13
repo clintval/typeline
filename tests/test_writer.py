@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from typing import Optional
 
 import pytest
 from typing_extensions import override
@@ -134,3 +135,19 @@ def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
         writer.write(MyMetric(0.1, [1, 2, 3]))
 
     assert (tmp_path / "test.txt").read_text() == "0.1,'1,2,3'\n"
+
+
+def test_writer_can_write_old_style_optional_types(tmp_path: Path) -> None:
+    """Test that the writer can write old style optional types."""
+
+    @dataclass
+    class MyMetric:
+        field1: float
+        field2: Optional[int]
+        field3: Optional[list[int]]
+
+    with CsvRecordWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
+        writer.write(MyMetric(0.1, 1, None))
+        writer.write(MyMetric(0.2, None, [1, 2, 3]))
+
+    assert (tmp_path / "test.txt").read_text() == "0.1,1,null\n0.2,null,'[1,2,3]'\n"

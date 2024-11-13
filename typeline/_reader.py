@@ -216,7 +216,7 @@ class DelimitedRecordReader(
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
         """
-        handle = Path(path).open("r")
+        handle = Path(path).expanduser().open("r")
         reader = cls(handle, record_type, header=header, comment_prefixes=comment_prefixes)
         return reader
 

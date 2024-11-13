@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from typing import Optional
 from typing import get_origin
 
 import pytest
@@ -283,3 +284,21 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
             ),
         ):
             list(reader)
+
+
+def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:
+    """Test that the reader can read old style optional types."""
+
+    @dataclass
+    class MyMetric:
+        field1: float
+        field2: Optional[int]
+        field3: Optional[list[int]]
+
+    (tmp_path / "test.txt").write_text("0.1,1,null\n0.2,null,'[1,2,3]'\n")
+
+    with CsvRecordReader.from_path(tmp_path / "test.txt", MyMetric, header=False) as reader:
+        record1, record2 = list(iter(reader))
+
+    assert record1 == MyMetric(0.1, 1, None)
+    assert record2 == MyMetric(0.2, None, [1, 2, 3])
