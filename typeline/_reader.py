@@ -211,7 +211,7 @@ class DelimitedRecordReader(
         """Construct a delimited data reader from a file path.
 
         Args:
-            path: the pat to the file to read delimited data from.
+            path: the path to the file to read delimited data from.
             record_type: the type of the object we will be writing.
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.

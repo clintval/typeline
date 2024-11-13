@@ -1,5 +1,4 @@
 import csv
-import json
 from abc import ABC
 from abc import abstractmethod
 from contextlib import AbstractContextManager
@@ -16,6 +15,7 @@ from typing import cast
 from typing import final
 
 from msgspec import to_builtins
+from msgspec.json import Encoder as JSONEncoder
 from typing_extensions import Self
 from typing_extensions import override
 
@@ -39,12 +39,18 @@ class DelimitedRecordWriter(
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
 
+        # Initialize and save internal attributes of this class.
         self._handle: TextIOWrapper = handle
         self._record_type: type[RecordType] = record_type
 
+        # Inspect the record type and save the fields, field names, and field types.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in fields_of(record_type)]
 
+        # Build a JSON encoder for intermediate data conversion (after dataclass, before delimited).
+        self._encoder: JSONEncoder = JSONEncoder()
+
+        # Build the delimited dictionary reader, filtering out any comment lines along the way.
         self._writer: DictWriter[str] = DictWriter(
             handle,
             fieldnames=self._header,
@@ -90,8 +96,10 @@ class DelimitedRecordWriter(
             )
 
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
-        builtin = {
-            name: (json.dumps(value) if not isinstance(value, str) else value)
+        builtin: dict[str, str] = {
+            name: (
+                self._encoder.encode(value).decode("utf-8") if not isinstance(value, str) else value
+            )
             for name, value in cast(dict[str, Any], to_builtins(encoded, str_keys=True)).items()
         }
         self._writer.writerow(builtin)
@@ -112,7 +120,12 @@ class DelimitedRecordWriter(
     def from_path(
         cls, path: Path | str, record_type: type[RecordType]
     ) -> "DelimitedRecordWriter[RecordType]":
-        """Construct a delimited struct writer from a file path."""
+        """Construct a delimited data writer from a file path.
+
+        Args:
+            path: the path to the file to write delimited data to.
+            record_type: the type of the object we will be writing.
+        """
         writer = cls(Path(path).open("w"), record_type)
         return writer
 

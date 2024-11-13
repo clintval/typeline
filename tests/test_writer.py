@@ -96,23 +96,22 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
     with TsvRecordWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
-    assert (tmp_path / "test.txt").read_text() == "\t".join([
-        "1",
-        "'my\tname'",
-        "0.2",
-        "[1, 2, 3]",
-        "[3, 4, 5]",
-        "[5, 6, 7]",
-        '{"field1": 1, "field2": 2}',
-        '{"field1": 10, "field2": "hi-mom", "field3": null}',
-        ", ".join([
-            r'{"first": {"field1": 2, "field2": "hi-dad", "field3": 0.2}',
-            r'"second": {"field1": 3, "field2": "hi-all", "field3": 0.3}}',
-        ]),
-        "true",
-        "null",
-        "0.2\n",
-    ])
+    expected: str = (
+        "1"
+        + "\t'my\tname'"
+        + "\t0.2"
+        + "\t[1,2,3]"
+        + "\t[3,4,5]"
+        + "\t[5,6,7]"
+        + '\t{"field1":1,"field2":2}'
+        + '\t{"field1":10,"field2":"hi-mom","field3":null}'
+        + '\t{"first":{"field1":2,"field2":"hi-dad","field3":0.2}'
+        + ',"second":{"field1":3,"field2":"hi-all","field3":0.3}}'
+        + "\ttrue"
+        + "\tnull"
+        + "\t0.2\n"
+    )
+    assert (tmp_path / "test.txt").read_text() == expected
 
 
 def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
