@@ -22,8 +22,8 @@ from typing_extensions import override
 from ._data_types import RecordType
 
 
-class DelimitedStructWriter(
-    AbstractContextManager["DelimitedStructWriter[RecordType]"],
+class DelimitedRecordWriter(
+    AbstractContextManager["DelimitedRecordWriter[RecordType]"],
     Generic[RecordType],
     ABC,
 ):
@@ -39,10 +39,12 @@ class DelimitedStructWriter(
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
 
-        self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
+        self._record_type: type[RecordType] = record_type
+
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in fields_of(record_type)]
+
         self._writer: DictWriter[str] = DictWriter(
             handle,
             fieldnames=self._header,
@@ -54,7 +56,7 @@ class DelimitedStructWriter(
     @property
     @abstractmethod
     def delimiter(self) -> str:
-        """Delimiter character to use in the output."""
+        """The single-character string that is expected to separate the delimited data."""
 
     @override
     def __enter__(self) -> Self:
@@ -69,7 +71,7 @@ class DelimitedStructWriter(
         __exc_value: BaseException | None,
         __traceback: TracebackType | None,
     ) -> bool | None:
-        """Close and exit this context."""
+        """Exit this context while closing all open resources."""
         self.close()
         return None
 
@@ -109,13 +111,13 @@ class DelimitedStructWriter(
     @classmethod
     def from_path(
         cls, path: Path | str, record_type: type[RecordType]
-    ) -> "DelimitedStructWriter[RecordType]":
+    ) -> "DelimitedRecordWriter[RecordType]":
         """Construct a delimited struct writer from a file path."""
         writer = cls(Path(path).open("w"), record_type)
         return writer
 
 
-class CsvStructWriter(DelimitedStructWriter[RecordType]):
+class CsvRecordWriter(DelimitedRecordWriter[RecordType]):
     r"""A writer for writing dataclasses into comma-delimited data.
 
     Example:
@@ -129,10 +131,10 @@ class CsvStructWriter(DelimitedStructWriter[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import CsvStructWriter
+        >>> from typeline import CsvRecordWriter
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with CsvStructWriter.from_path(tmpfile.name, MyData) as writer:
+        ...     with CsvRecordWriter.from_path(tmpfile.name, MyData) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
         ...     Path(tmpfile.name).read_text()
@@ -148,7 +150,7 @@ class CsvStructWriter(DelimitedStructWriter[RecordType]):
         return ","
 
 
-class TsvStructWriter(DelimitedStructWriter[RecordType]):
+class TsvRecordWriter(DelimitedRecordWriter[RecordType]):
     r"""A writer for writing dataclasses into tab-delimited data.
 
     Example:
@@ -162,10 +164,10 @@ class TsvStructWriter(DelimitedStructWriter[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import TsvStructWriter
+        >>> from typeline import TsvRecordWriter
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with TsvStructWriter.from_path(tmpfile.name, MyData) as writer:
+        ...     with TsvRecordWriter.from_path(tmpfile.name, MyData) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
         ...     Path(tmpfile.name).read_text()

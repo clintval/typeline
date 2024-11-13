@@ -1,18 +1,19 @@
-# ruff: noqa: F401
 from ._data_types import RecordType
-from ._reader import CsvStructReader
-from ._reader import DelimitedStructReader
-from ._reader import TsvStructReader
-from ._writer import CsvStructWriter
-from ._writer import DelimitedStructWriter
-from ._writer import TsvStructWriter
+from ._data_types import build_union
+from ._reader import CsvRecordReader
+from ._reader import DelimitedRecordReader
+from ._reader import TsvRecordReader
+from ._writer import CsvRecordWriter
+from ._writer import DelimitedRecordWriter
+from ._writer import TsvRecordWriter
 
 __all__ = [
-    "CsvStructReader",
-    "DelimitedStructReader",
-    "TsvStructReader",
-    "CsvStructWriter",
-    "DelimitedStructWriter",
-    "TsvStructWriter",
+    "CsvRecordReader",
+    "DelimitedRecordReader",
+    "TsvRecordReader",
+    "CsvRecordWriter",
+    "DelimitedRecordWriter",
+    "TsvRecordWriter",
     "RecordType",
+    "build_union",
 ]
