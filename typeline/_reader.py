@@ -15,7 +15,6 @@ from types import TracebackType
 from types import UnionType
 from typing import Any
 from typing import Generic
-from typing import Union  # pyright: ignore[reportDeprecated]
 from typing import final
 from typing import get_args
 
@@ -28,6 +27,12 @@ from typing_extensions import override
 
 from ._data_types import JsonType
 from ._data_types import RecordType
+from ._data_types import build_union
+
+DEFAULT_COMMENT_PREFIXES: set[str] = set([])
+"""The default line prefixes that will tell the reader to skip those lines."""
+
+# TODO: line number support for when errors are raised.
 
 
 class DelimitedStructReader(
@@ -36,48 +41,54 @@ class DelimitedStructReader(
     Generic[RecordType],
     ABC,
 ):
-    """A reader for reading delimited data into dataclasses."""
+    """A reader for reading delimited text data into dataclasses."""
 
     def __init__(
         self,
         handle: TextIOWrapper,
         record_type: type[RecordType],
         /,
-        has_header: bool = True,
+        header: bool = True,
+        comment_prefixes: set[str] = DEFAULT_COMMENT_PREFIXES,
     ):
-        """Instantiate a new delimited struct reader.
+        """Instantiate a new delimited data reader.
 
         Args:
-            handle: a file-like object to read records from.
+            handle: a file-like object to read delimited data from.
             record_type: the type of the object we will be writing.
-            has_header: whether we expect the first line to be a header or not.
+            header: whether we expect the first line to be a header or not.
+            comment_prefixes: skip lines that have any of these string prefixes.
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
 
-        self._decoder: JSONDecoder[Any] = JSONDecoder(strict=False)
-        self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
+        self._record_type: type[RecordType] = record_type
+        self._comment_prefixes: set[str] = comment_prefixes
+
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in self._fields]
-        self._types: list[type | str | Any] = [field.type for field in self._fields]
+        self._field_types: list[type | str | Any] = [field.type for field in self._fields]
+
+        self._decoder: JSONDecoder[Any] = JSONDecoder(strict=False)
+
         self._reader: DictReader[str] = DictReader(
             self._filter_out_comments(handle),
-            fieldnames=self._header if not has_header else None,
+            fieldnames=self._header if not header else None,
             delimiter=self.delimiter,
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
 
-        if self._reader.fieldnames is not None and set(self._reader.fieldnames) != set(
-            self._header
+        if self._reader.fieldnames is not None and (
+            set(self._reader.fieldnames) != set(self._header)
         ):
             raise ValueError("Fields of header do not match fields of dataclass!")
 
     @property
     @abstractmethod
     def delimiter(self) -> str:
-        """Delimiter character to use in the output."""
+        """The single-character string that is expected to separate the delimited data."""
 
     @override
     def __enter__(self) -> Self:
@@ -92,43 +103,19 @@ class DelimitedStructReader(
         __exc_value: BaseException | None,
         __traceback: TracebackType | None,
     ) -> bool | None:
-        """Close and exit this context."""
+        """Exit this context while closing all open resources."""
         self.close()
         return None
 
     def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
-        """Yield only lines in an iterator that do not start with a comment character."""
+        """Yield only lines in an iterator that do not start with a comment prefix."""
         for line in lines:
             stripped: str = line.strip()
             if not stripped:
                 continue
-            elif any(stripped.startswith(prefix) for prefix in self.comment_prefixes):
+            elif any(stripped.startswith(prefix) for prefix in self._comment_prefixes):
                 continue
             yield line
-
-    def _csv_dict_to_json(self, record: dict[str, str]) -> dict[str, JsonType]:
-        """Build a list of builtin-like objects from a string-only dictionary."""
-        items: list[str] = []
-
-        for (name, item), field_type in zip(record.items(), self._types, strict=True):
-            decoded: str = self._decode(field_type, item)
-            decoded = decoded.replace("\t", "\\t")
-            decoded = decoded.replace("\r", "\\r")
-            decoded = decoded.replace("\n", "\\n")
-            items.append(f'"{name}":{decoded}')
-
-        json_string: str = f"{{{','.join(items)}}}"
-
-        try:
-            as_builtins: dict[str, JsonType] = self._decoder.decode(json_string)
-        except DecodeError as exception:
-            raise DecodeError(
-                "Could not load delimited data line into JSON-like format."
-                + f" Built improperly formatted JSON: {json_string}."
-                + f" Originally formatted message: {exception}."
-            ) from exception
-
-        return as_builtins
 
     @override
     def __iter__(self) -> Iterator[RecordType]:
@@ -144,6 +131,30 @@ class DelimitedStructReader(
                     + f" Requested structure: {self._record_type.__name__}."
                     + f" Original exception: {exception}"
                 ) from exception
+
+    def _csv_dict_to_json(self, record: dict[str, str]) -> dict[str, JsonType]:
+        """Build a list of builtin-like objects from a string-only dictionary."""
+        items: list[str] = []
+
+        for (name, item), field_type in zip(record.items(), self._field_types, strict=True):
+            decoded: str = self._decode(field_type, item)
+            decoded = decoded.replace("\t", "\\t")
+            decoded = decoded.replace("\r", "\\r")
+            decoded = decoded.replace("\n", "\\n")
+            items.append(f'"{name}":{decoded}')
+
+        json_string: str = f"{{{','.join(items)}}}"
+
+        try:
+            as_builtins: dict[str, JsonType] = self._decoder.decode(json_string)
+        except DecodeError as exception:
+            raise DecodeError(
+                "Could not load delimited data line into JSON-like format."
+                + f" Built improperly formatted JSON: {json_string}."
+                + f" Original exception: {exception}."
+            ) from exception
+
+        return as_builtins
 
     def _decode(self, field_type: type[Any] | str | Any, item: str) -> str:
         """A callback for overriding the string formatting of builtin and custom types."""
@@ -168,7 +179,7 @@ class DelimitedStructReader(
                     return self._decode(next(iter(other_types)), item)
                 else:
                     other_types = set(type_args) - {NoneType}
-                    return self._decode(Union[other_types], item)  # pyright: ignore[reportDeprecated]
+                    return self._decode(build_union(*other_types), item)
             elif str in type_args:
                 return f'"{item}"'
             elif any(_type in type_args for _type in (float, int)):
@@ -177,11 +188,6 @@ class DelimitedStructReader(
                 return f"{item}".lower()
 
         return f"{item}"
-
-    @property
-    def comment_prefixes(self) -> set[str]:
-        """Any string that when one prefixes a line, marks it as a comment."""
-        return {"#"}
 
     def close(self) -> None:
         """Close all opened resources."""
@@ -194,10 +200,20 @@ class DelimitedStructReader(
         path: Path | str,
         record_type: type[RecordType],
         /,
-        has_header: bool = True,
+        header: bool = True,
+        comment_prefixes: set[str] = DEFAULT_COMMENT_PREFIXES,
     ) -> Self:
-        """Construct a delimited struct reader from a file path."""
-        reader = cls(Path(path).open("r"), record_type, has_header=has_header)
+        """Construct a delimited data reader from a file path.
+
+        Args:
+            path: the pat to the file to read delimited data from.
+            record_type: the type of the object we will be writing.
+            header: whether we expect the first line to be a header or not.
+            comment_prefixes: skip lines that have any of these string prefixes.
+        """
+        reader = cls(
+            Path(path).open("r"), record_type, header=header, comment_prefixes=comment_prefixes
+        )
         return reader
 
 

@@ -39,10 +39,12 @@ class DelimitedStructWriter(
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
 
-        self._record_type: type[RecordType] = record_type
         self._handle: TextIOWrapper = handle
+        self._record_type: type[RecordType] = record_type
+
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in fields_of(record_type)]
+
         self._writer: DictWriter[str] = DictWriter(
             handle,
             fieldnames=self._header,
@@ -54,7 +56,7 @@ class DelimitedStructWriter(
     @property
     @abstractmethod
     def delimiter(self) -> str:
-        """Delimiter character to use in the output."""
+        """The single-character string that is expected to separate the delimited data."""
 
     @override
     def __enter__(self) -> Self:
@@ -69,7 +71,7 @@ class DelimitedStructWriter(
         __exc_value: BaseException | None,
         __traceback: TracebackType | None,
     ) -> bool | None:
-        """Close and exit this context."""
+        """Exit this context while closing all open resources."""
         self.close()
         return None
 

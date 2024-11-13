@@ -100,7 +100,7 @@ def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
         writer.write(metric)
     assert (tmp_path / "test.txt").read_text() == "1\t'my\tname'\t0.2\n"
 
-    with TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric, has_header=False) as reader:
+    with TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric, header=False) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="my\tname", field3=0.2)]
 
 
@@ -144,9 +144,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
         "1\n",
     ])
 
-    with TsvStructReader.from_path(
-        tmp_path / "test.txt", ComplexMetric, has_header=False
-    ) as reader:
+    with TsvStructReader.from_path(tmp_path / "test.txt", ComplexMetric, header=False) as reader:
         assert list(reader) == [metric]
 
 
@@ -171,7 +169,9 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
         "2,name2,0.3\n",
     ])
 
-    with CsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
+    with CsvStructReader.from_path(
+        tmp_path / "test.txt", SimpleMetric, comment_prefixes={"#"}
+    ) as reader:
         assert list(reader) == [
             SimpleMetric(field1=1, field2="name", field3=0.2),
             SimpleMetric(field1=2, field2="name2", field3=0.3),
@@ -221,7 +221,7 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
                 r"Could not load delimited data line into JSON\-like format\."
                 + r" Built improperly formatted JSON\:"
                 + r" \{\"field1\"\:1\,\"field2\"\:\"name\"\,\"field3\"\:BOMB\}\."
-                + r" Originally formatted message\: JSON is malformed\:"
+                + r" Original exception\: JSON is malformed\:"
                 + r" invalid character \(byte \d\d\)\."
             ),
         ),
@@ -234,7 +234,7 @@ def test_reader_can_read_empty_file_ok(tmp_path: Path) -> None:
     (tmp_path / "test.txt").touch()
 
     with (
-        TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric, has_header=False) as reader,
+        TsvStructReader.from_path(tmp_path / "test.txt", SimpleMetric, header=False) as reader,
     ):
         assert list(reader) == []
 
