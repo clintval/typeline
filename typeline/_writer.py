@@ -96,13 +96,12 @@ class DelimitedRecordWriter(
             )
 
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
-        builtin: dict[str, str] = {
-            name: (
-                self._encoder.encode(value).decode("utf-8") if not isinstance(value, str) else value
-            )
-            for name, value in cast(dict[str, Any], to_builtins(encoded, str_keys=True)).items()
+        builtin = cast(dict[str, Any], to_builtins(encoded, str_keys=True))
+        as_dict = {
+            name: value if isinstance(value, str) else self._encoder.encode(value).decode("utf-8")
+            for name, value in builtin.items()
         }
-        self._writer.writerow(builtin)
+        self._writer.writerow(as_dict)
 
         return None
 
