@@ -35,8 +35,8 @@ DEFAULT_COMMENT_PREFIXES: set[str] = set([])
 # TODO: line number support for when errors are raised.
 
 
-class DelimitedStructReader(
-    AbstractContextManager["DelimitedStructReader[RecordType]"],
+class DelimitedRecordReader(
+    AbstractContextManager["DelimitedRecordReader[RecordType]"],
     Iterable[RecordType],
     Generic[RecordType],
     ABC,
@@ -62,16 +62,20 @@ class DelimitedStructReader(
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
 
+        # Initialize and save internal attributes of this class.
         self._handle: TextIOWrapper = handle
         self._record_type: type[RecordType] = record_type
         self._comment_prefixes: set[str] = comment_prefixes
 
+        # Inspect the record type and save the fields, field names, and field types.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in self._fields]
         self._field_types: list[type | str | Any] = [field.type for field in self._fields]
 
+        # Build a JSON decoder for intermediate data conversion (after delimited, before dataclass).
         self._decoder: JSONDecoder[Any] = JSONDecoder(strict=False)
 
+        # Build the delimited dictionary reader, filtering out any comment lines along the way.
         self._reader: DictReader[str] = DictReader(
             self._filter_out_comments(handle),
             fieldnames=self._header if not header else None,
@@ -80,6 +84,7 @@ class DelimitedStructReader(
             quoting=csv.QUOTE_MINIMAL,
         )
 
+        # Protect the user from the case where a header was specified, but a data line was found!
         if self._reader.fieldnames is not None and (
             set(self._reader.fieldnames) != set(self._header)
         ):
@@ -211,13 +216,12 @@ class DelimitedStructReader(
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
         """
-        reader = cls(
-            Path(path).open("r"), record_type, header=header, comment_prefixes=comment_prefixes
-        )
+        handle = Path(path).open("r")
+        reader = cls(handle, record_type, header=header, comment_prefixes=comment_prefixes)
         return reader
 
 
-class CsvStructReader(DelimitedStructReader[RecordType]):
+class CsvRecordReader(DelimitedRecordReader[RecordType]):
     r"""A reader for reading comma-delimited data into dataclasses.
 
     Example:
@@ -231,12 +235,12 @@ class CsvStructReader(DelimitedStructReader[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import CsvStructReader
+        >>> from typeline import CsvRecordReader
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with CsvStructReader.from_path(tmpfile.name, MyData) as reader:
+        ...     with CsvRecordReader.from_path(tmpfile.name, MyData) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
@@ -251,7 +255,7 @@ class CsvStructReader(DelimitedStructReader[RecordType]):
         return ","
 
 
-class TsvStructReader(DelimitedStructReader[RecordType]):
+class TsvRecordReader(DelimitedRecordReader[RecordType]):
     r"""A reader for reading tab-delimited data into dataclasses.
 
     Example:
@@ -265,12 +269,12 @@ class TsvStructReader(DelimitedStructReader[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import TsvStructReader
+        >>> from typeline import TsvRecordReader
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with TsvStructReader.from_path(tmpfile.name, MyData) as reader:
+        ...     with TsvRecordReader.from_path(tmpfile.name, MyData) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)

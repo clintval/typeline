@@ -6,10 +6,8 @@ from typing import Protocol
 from typing import TypeAlias
 from typing import TypeVar
 from typing import cast
-from typing import runtime_checkable
 
 
-@runtime_checkable
 class DataclassInstance(Protocol):
     """A protocol for objects that are dataclass instances."""
 
@@ -20,7 +18,7 @@ JsonType: TypeAlias = dict[str, "JsonType"] | list["JsonType"] | str | int | flo
 """A JSON-like data type."""
 
 RecordType = TypeVar("RecordType", bound=DataclassInstance)
-"""A type variable for the type of record (of dataclass type) for reading and writing."""
+"""The type variable for the records we will be reading and writing from delimited text data."""
 
 
 def build_union(*types: type) -> type | UnionType:

@@ -22,8 +22,8 @@ from typing_extensions import override
 from ._data_types import RecordType
 
 
-class DelimitedStructWriter(
-    AbstractContextManager["DelimitedStructWriter[RecordType]"],
+class DelimitedRecordWriter(
+    AbstractContextManager["DelimitedRecordWriter[RecordType]"],
     Generic[RecordType],
     ABC,
 ):
@@ -111,13 +111,13 @@ class DelimitedStructWriter(
     @classmethod
     def from_path(
         cls, path: Path | str, record_type: type[RecordType]
-    ) -> "DelimitedStructWriter[RecordType]":
+    ) -> "DelimitedRecordWriter[RecordType]":
         """Construct a delimited struct writer from a file path."""
         writer = cls(Path(path).open("w"), record_type)
         return writer
 
 
-class CsvStructWriter(DelimitedStructWriter[RecordType]):
+class CsvRecordWriter(DelimitedRecordWriter[RecordType]):
     r"""A writer for writing dataclasses into comma-delimited data.
 
     Example:
@@ -131,10 +131,10 @@ class CsvStructWriter(DelimitedStructWriter[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import CsvStructWriter
+        >>> from typeline import CsvRecordWriter
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with CsvStructWriter.from_path(tmpfile.name, MyData) as writer:
+        ...     with CsvRecordWriter.from_path(tmpfile.name, MyData) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
         ...     Path(tmpfile.name).read_text()
@@ -150,7 +150,7 @@ class CsvStructWriter(DelimitedStructWriter[RecordType]):
         return ","
 
 
-class TsvStructWriter(DelimitedStructWriter[RecordType]):
+class TsvRecordWriter(DelimitedRecordWriter[RecordType]):
     r"""A writer for writing dataclasses into tab-delimited data.
 
     Example:
@@ -164,10 +164,10 @@ class TsvStructWriter(DelimitedStructWriter[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import TsvStructWriter
+        >>> from typeline import TsvRecordWriter
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with TsvStructWriter.from_path(tmpfile.name, MyData) as writer:
+        ...     with TsvRecordWriter.from_path(tmpfile.name, MyData) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
         ...     Path(tmpfile.name).read_text()
