@@ -125,7 +125,7 @@ class DelimitedRecordWriter(
             path: the path to the file to write delimited data to.
             record_type: the type of the object we will be writing.
         """
-        writer = cls(Path(path).open("w"), record_type)
+        writer = cls(Path(path).expanduser().open("w"), record_type)
         return writer
 
 

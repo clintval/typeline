@@ -12,7 +12,6 @@ from io import TextIOWrapper
 from pathlib import Path
 from types import NoneType
 from types import TracebackType
-from types import UnionType
 from typing import Any
 from typing import Generic
 from typing import final
@@ -28,6 +27,7 @@ from typing_extensions import override
 from ._data_types import JsonType
 from ._data_types import RecordType
 from ._data_types import build_union
+from ._data_types import is_union
 
 DEFAULT_COMMENT_PREFIXES: set[str] = set([])
 """The default line prefixes that will tell the reader to skip those lines."""
@@ -170,14 +170,14 @@ class DelimitedRecordReader(
         elif field_type is bool:
             return f"{item}".lower()
 
-        if not isinstance(field_type, UnionType):
+        if not is_union(field_type):
             return f"{item}"
         else:
             type_args: tuple[type, ...] = get_args(field_type)
 
             if NoneType in type_args:
                 other_types: set[type]
-                if item == "":
+                if item == "" or item == "null":
                     return "null"
                 elif len(type_args) == 2:
                     other_types = set(type_args) - {NoneType}
@@ -216,7 +216,7 @@ class DelimitedRecordReader(
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
         """
-        handle = Path(path).open("r")
+        handle = Path(path).expanduser().open("r")
         reader = cls(handle, record_type, header=header, comment_prefixes=comment_prefixes)
         return reader
 
