@@ -2,7 +2,7 @@
 name = "typeline"
 version = "0.9.0"
 description = "Write dataclasses to delimited text formats and read them back again."
-authors = [{ name = "Clint Valentine", email = "<valentine.clint@gmail.com>" }]
+authors = [{ name = "Clint Valentine", email = "valentine.clint@gmail.com" }]
 license = "MIT"
 readme = "README.md"
 keywords = ["dataclass", "IO", "delimited-data", "CSV", "TSV", "msgspec"]
