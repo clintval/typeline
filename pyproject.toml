@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "typeline"
-version = "0.7.0"
+version = "0.8.0"
 description = "Write dataclasses to delimited text formats and read them back again."
 authors = ["Clint Valentine <valentine.clint@gmail.com>"]
 license = "MIT"
