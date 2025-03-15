@@ -2,7 +2,7 @@
 
 [![PyPi Release](https://badge.fury.io/py/typeline.svg)](https://badge.fury.io/py/typeline)
 [![CI](https://github.com/clintval/typeline/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/clintval/typeline/actions/workflows/tests.yml?query=branch%3Amain)
-[![Python Versions](https://img.shields.io/badge/python-3.10_|_3.11_|_3.12-blue)](https://github.com/clintval/typeline)
+[![Python Versions](https://img.shields.io/badge/python-3.10_|_3.11_|_3.12_|_3.13-blue)](https://github.com/clintval/typeline)
 [![basedpyright](https://img.shields.io/badge/basedpyright-checked-42b983)](https://docs.basedpyright.com/latest/)
 [![mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![Poetry](https://img.shields.io/endpoint?url=https://python-poetry.org/badge/v0.json)](https://python-poetry.org/)
