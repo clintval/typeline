@@ -9,6 +9,7 @@ from dataclasses import Field
 from dataclasses import fields as fields_of
 from dataclasses import is_dataclass
 from io import TextIOWrapper
+from os import linesep
 from pathlib import Path
 from types import NoneType
 from types import TracebackType
@@ -62,6 +63,7 @@ class DelimitedDataReader(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIOWrapper = handle
+        self._line_count: int = 0
         self._record_type: type[RecordType] = record_type
         self._comment_prefixes: set[str] = comment_prefixes
 
@@ -70,22 +72,21 @@ class DelimitedDataReader(
         self._header: list[str] = [field.name for field in self._fields]
         self._field_types: list[type | str | Any] = [field.type for field in self._fields]
 
-        # Build a JSON decoder for intermediate data conversion (after delimited, before dataclass).
-        self._decoder: JSONDecoder[Any] = JSONDecoder(strict=False)
+        # Build a JSON decoder for intermediate data conversion (after delimited; before dataclass).
+        self._decoder: JSONDecoder[dict[str, JsonType]] = JSONDecoder(strict=False)
 
         # Build the delimited dictionary reader, filtering out any comment lines along the way.
         self._reader: DictReader[str] = DictReader(
             self._filter_out_comments(handle),
-            fieldnames=self._header if not header else None,
             delimiter=self.delimiter,
+            fieldnames=self._header if not header else None,
+            lineterminator=linesep,
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
 
         # Protect the user from the case where a header was specified, but a data line was found!
-        if self._reader.fieldnames is not None and (
-            set(self._reader.fieldnames) != set(self._header)
-        ):
+        if self._reader.fieldnames is not None and self._reader.fieldnames != self._header:
             raise ValueError("Fields of header do not match fields of dataclass!")
 
     @property
@@ -113,8 +114,8 @@ class DelimitedDataReader(
     def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
         """Yield only lines in an iterator that do not start with a comment prefix."""
         for line in lines:
-            stripped: str = line.strip()
-            if not stripped:
+            self._line_count += 1
+            if not (stripped := line.strip()):
                 continue
             elif any(stripped.startswith(prefix) for prefix in self._comment_prefixes):
                 continue
@@ -126,7 +127,7 @@ class DelimitedDataReader(
         for record in self._reader:
             as_builtins = self._csv_dict_to_json(record)
             try:
-                yield convert(as_builtins, self._record_type, strict=False)
+                yield convert(as_builtins, self._record_type, strict=False, str_keys=True)
             except ValidationError as exception:
                 raise ValidationError(
                     "Could not parse JSON-like object into requested structure:"
@@ -152,7 +153,7 @@ class DelimitedDataReader(
             as_builtins: dict[str, JsonType] = self._decoder.decode(json_string)
         except DecodeError as exception:
             raise DecodeError(
-                "Could not load delimited data line into JSON-like format."
+                f"Could not load delimited data into JSON-like format on line {self._line_count}."
                 + f" Built improperly formatted JSON: {json_string}."
                 + f" Original exception: {exception}."
             ) from exception

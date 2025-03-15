@@ -207,8 +207,8 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
     """Test the reader raises an exception for failed type coercion."""
     (tmp_path / "test.txt").write_text(
         "\n".join([
-            "field1\tfield2\tfield3\n",
-            "1\tname\tBOMB\n",
+            "field1\tfield2\tfield3",
+            "1\tname\tBOMB",
         ])
     )
 
@@ -217,7 +217,7 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
         pytest.raises(
             DecodeError,
             match=(
-                r"Could not load delimited data line into JSON\-like format\."
+                r"Could not load delimited data into JSON\-like format on line 2\."
                 + r" Built improperly formatted JSON\:"
                 + r" \{\"field1\"\:1\,\"field2\"\:\"name\"\,\"field3\"\:BOMB\}\."
                 + r" Original exception\: JSON is malformed\:"

@@ -44,14 +44,14 @@ class DelimitedDataWriter(
         self._handle: TextIOWrapper = handle
         self._record_type: type[RecordType] = record_type
 
-        # Inspect the record type and save the fields, field names, and field types.
+        # Inspect the record type and save the fields and field names.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
-        self._header: list[str] = [field.name for field in fields_of(record_type)]
+        self._header: list[str] = [field.name for field in self._fields]
 
-        # Build a JSON encoder for intermediate data conversion (after dataclass, before delimited).
+        # Build a JSON encoder for intermediate data conversion (after dataclass; before delimited).
         self._encoder: JSONEncoder = JSONEncoder()
 
-        # Build the delimited dictionary reader, filtering out any comment lines along the way.
+        # Build the delimited dictionary writer which will use platform-dependent newlines.
         self._writer: DictWriter[str] = DictWriter(
             handle,
             fieldnames=self._header,
@@ -84,17 +84,14 @@ class DelimitedDataWriter(
         return None
 
     def _encode(self, item: Any) -> Any:
-        """A callback for overriding the encoding of builtin types and custom types."""
-        if isinstance(item, tuple):
-            return list(item)  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+        """A custom encoder that can pre-process an item prior to serialization."""
         return item
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object."""
         if not isinstance(record, self._record_type):
             raise ValueError(
-                f"Expected {self._record_type.__name__} but found"
-                + f" {record.__class__.__qualname__}!"
+                f"Expected {self._record_type.__name__} but found {record.__class__.__qualname__}!"
             )
 
         encoded = {name: self._encode(getattr(record, name)) for name in self._header}
