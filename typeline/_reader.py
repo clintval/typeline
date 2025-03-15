@@ -32,11 +32,9 @@ from ._data_types import is_union
 DEFAULT_COMMENT_PREFIXES: set[str] = set([])
 """The default line prefixes that will tell the reader to skip those lines."""
 
-# TODO: line number support for when errors are raised.
 
-
-class DelimitedRecordReader(
-    AbstractContextManager["DelimitedRecordReader[RecordType]"],
+class DelimitedDataReader(
+    AbstractContextManager["DelimitedDataReader[RecordType]"],
     Iterable[RecordType],
     Generic[RecordType],
     ABC,
@@ -221,7 +219,7 @@ class DelimitedRecordReader(
         return reader
 
 
-class CsvRecordReader(DelimitedRecordReader[RecordType]):
+class CsvReader(DelimitedDataReader[RecordType]):
     r"""A reader for reading comma-delimited data into dataclasses.
 
     Example:
@@ -235,12 +233,12 @@ class CsvRecordReader(DelimitedRecordReader[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import CsvRecordReader
+        >>> from typeline import CsvReader
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with CsvRecordReader.from_path(tmpfile.name, MyData) as reader:
+        ...     with CsvReader.from_path(tmpfile.name, MyData) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
@@ -255,7 +253,7 @@ class CsvRecordReader(DelimitedRecordReader[RecordType]):
         return ","
 
 
-class TsvRecordReader(DelimitedRecordReader[RecordType]):
+class TsvReader(DelimitedDataReader[RecordType]):
     r"""A reader for reading tab-delimited data into dataclasses.
 
     Example:
@@ -269,12 +267,12 @@ class TsvRecordReader(DelimitedRecordReader[RecordType]):
         ...     field1: str
         ...     field2: float | None
         >>>
-        >>> from typeline import TsvRecordReader
+        >>> from typeline import TsvReader
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with TsvRecordReader.from_path(tmpfile.name, MyData) as reader:
+        ...     with TsvReader.from_path(tmpfile.name, MyData) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
