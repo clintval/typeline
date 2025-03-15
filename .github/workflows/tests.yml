@@ -9,7 +9,7 @@ on:
   workflow_call:
 
 env:
-  POETRY_VERSION: 1.8
+  POETRY_VERSION: 2.1.1
 
 jobs:
   unit-tests:
@@ -35,7 +35,7 @@ jobs:
       - name: Install and configure Poetry
         uses: snok/install-poetry@v1
         with:
-          version: ${{env.POETRY_VERSION}}
+          version: ${{ env.POETRY_VERSION }}
           installer-parallel: true
 
       - name: Set up cache
