@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: File Formats",
     "Topic :: Software Development :: Documentation",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -29,7 +30,7 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.10.0,<4.0.0"
-msgspec = "^0.18,<1.0"
+msgspec = "^0.19,<1.0"
 typing-extensions = "^4.12,<5.0"
 
 [tool.poetry.dev-dependencies]
@@ -49,28 +50,22 @@ poetry_command = "task"
 
 [tool.poe.tasks]
 fix-format = "ruff format"
-fix-lint   = "ruff check --fix"
+fix-lint = "ruff check --fix"
 
 fix-all.ignore_fail = true
-fix-all.sequence    = [
-    "fix-format",
-    "fix-lint"
-]
+fix-all.sequence = ["fix-format", "fix-lint"]
 
-check-lock   = "poetry check --lock"
+check-lock = "poetry check --lock"
 check-format = "ruff format --check --diff"
-check-lint   = "ruff check"
-check-tests  = "pytest --doctest-glob='*.md'"
+check-lint = "ruff check"
+check-tests = "pytest --doctest-glob='*.md'"
 
-_check-mypy    = "mypy"
+_check-mypy = "mypy"
 _check-pyright = "basedpyright"
-check-typing.sequence = [
-    "_check-mypy",
-    "_check-pyright"
-]
+check-typing.sequence = ["_check-mypy", "_check-pyright"]
 
 check-all.ignore_fail = true
-check-all.sequence    = [
+check-all.sequence = [
     "check-lock",
     "check-format",
     "check-lint",
@@ -79,7 +74,7 @@ check-all.sequence    = [
 ]
 
 fix-and-check-all.ignore_fail = true
-fix-and-check-all.sequence    = [
+fix-and-check-all.sequence = [
     "fix-all",
     "check-all"
 ]
@@ -105,7 +100,7 @@ doctest_optionflags = [
 
 [tool.mypy]
 files                       = ["typeline/", "tests/"]
-strict_optional             = false
+strict_optional             = true
 strict_equality             = true
 check_untyped_defs          = true
 disallow_incomplete_defs    = true
@@ -119,7 +114,10 @@ warn_return_any             = true
 warn_unreachable            = true
 warn_unused_configs         = true
 warn_unused_ignores         = true
-enable_error_code           = "ignore-without-code"
+enable_error_code           = [
+    "ignore-without-code",
+    "possibly-undefined",
+]
 
 [[tool.mypy.overrides]]
 module = ".conftest"
@@ -139,27 +137,30 @@ preview        = true
 
 [tool.ruff.lint]
 select    = [
-    "ARG",   # Unused arguments
-    "C901",  # McCabe complexity
-    "B",     # bugbear
-    "D",     # pydocstyle (docstrings. We have the "google" convention enabled)
-    "D204",  # Blank line between class docstring and first (__init__) method
-    "D212",  # summary line should be located on the same line as opening quotes
-    "E",     # pycodestyle errors
-    "F",     # pyflakes
-    "I",     # isort
-    "N",     # PEP8 naming
-    "W",     # pycodestyle warnings
-    "Q"      # flake8-quotes
+    "ARG",    # Unused arguments
+    "C901",   # McCabe complexity
+    "B",      # bugbear
+    "D",      # pydocstyle (docstrings. We have the "google" convention enabled)
+    "D204",   # Blank line between class docstring and first (__init__) method
+    "D213",   # Summary line should be located on the line after opening quotes
+    "E",      # pycodestyle errors
+    "LOG",    # flake8-logging
+    "LOG015", # (preview rule) Prohibit calls to the root logger
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # PEP8 naming
+    "W",      # pycodestyle warnings
+    "Q",      # flake8-quotes
 ]
 ignore    = [
     "E203",
     "E701",
-    "D213",  # Summary line should be located on the line after opening quote
+    "D213",  # summary line should be located on the line after opening quote
     "D100",  # missing docstring in public module
     "D104",  # missing docstring in public package
 ]
 unfixable = ["B"]
+preview = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 13

@@ -23,7 +23,7 @@ poetry run pytest
 To check the typing in the codebase, run:
 
 ```console
-poetry run mypy
+poetry run mypy && poetry run basedpyright
 ```
 
 To generate a code coverage report after testing locally, run:
