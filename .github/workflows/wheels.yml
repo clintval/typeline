@@ -1,4 +1,4 @@
-name: build wheels
+name: wheels
 
 on:
   pull_request:
@@ -7,9 +7,7 @@ on:
 
 jobs:
   build-wheels:
-    name: Build wheels
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
