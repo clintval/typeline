@@ -7,6 +7,7 @@ from dataclasses import Field
 from dataclasses import fields as fields_of
 from dataclasses import is_dataclass
 from io import TextIOWrapper
+from os import linesep
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -55,6 +56,7 @@ class DelimitedRecordWriter(
             handle,
             fieldnames=self._header,
             delimiter=self.delimiter,
+            lineterminator=linesep,
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
