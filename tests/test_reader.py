@@ -9,11 +9,11 @@ from msgspec import DecodeError
 from msgspec import ValidationError
 from typing_extensions import override
 
-from typeline import CsvRecordReader
-from typeline import CsvRecordWriter
+from typeline import CsvReader
+from typeline import CsvWriter
 from typeline import RecordType
-from typeline import TsvRecordReader
-from typeline import TsvRecordWriter
+from typeline import TsvReader
+from typeline import TsvWriter
 
 from .conftest import ComplexMetric
 from .conftest import SimpleMetric
@@ -21,7 +21,7 @@ from .conftest import SimpleMetric
 
 def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
     """Test that the CSV reader is set to use a comma."""
-    with CsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -30,10 +30,10 @@ def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
         "1,name,0.2\n",
     ])
 
-    with CsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
+    with CsvReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
-    with CsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -42,13 +42,13 @@ def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
         "1,name,0.2\n",
     ])
 
-    with CsvRecordReader(open(tmp_path / "test.txt", "r"), SimpleMetric) as reader:
+    with CsvReader(open(tmp_path / "test.txt", "r"), SimpleMetric) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
 
 def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
     """Test that the TSV reader is set to use a tab."""
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -57,10 +57,10 @@ def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
         "1\tname\t0.2\n",
     ])
 
-    with TsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
+    with TsvReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -69,7 +69,7 @@ def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
         "1\tname\t0.2\n",
     ])
 
-    with TsvRecordReader(open(tmp_path / "test.txt", "r"), SimpleMetric) as reader:
+    with TsvReader(open(tmp_path / "test.txt", "r"), SimpleMetric) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
 
@@ -82,7 +82,7 @@ def test_reader_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
     (tmp_path / "test.txt").touch()
 
     with pytest.raises(ValueError, match="record_type is not a dataclass but must be!"):
-        CsvRecordReader.from_path(tmp_path / "test.txt", MyTest)  # type: ignore[type-var]
+        CsvReader.from_path(tmp_path / "test.txt", MyTest)  # type: ignore[type-var]
 
 
 def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
@@ -90,18 +90,18 @@ def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
     (tmp_path / "test.txt").write_text("field10,field11,field13\n")
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
-        CsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric)
+        CsvReader.from_path(tmp_path / "test.txt", SimpleMetric)
 
 
 def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
     """Test that the reader will escape text when a delimiter is used in a field."""
     metric = SimpleMetric(field1=1, field2="my\tname", field3=0.2)
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
     assert (tmp_path / "test.txt").read_text() == "1\t'my\tname'\t0.2\n"
 
-    with TsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric, header=False) as reader:
+    with TsvReader.from_path(tmp_path / "test.txt", SimpleMetric, header=False) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="my\tname", field3=0.2)]
 
 
@@ -124,7 +124,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
         field11=None,
         field12=0.2,
     )
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
 
@@ -145,13 +145,13 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
     )
     assert (tmp_path / "test.txt").read_text() == expected
 
-    with TsvRecordReader.from_path(tmp_path / "test.txt", ComplexMetric, header=False) as reader:
+    with TsvReader.from_path(tmp_path / "test.txt", ComplexMetric, header=False) as reader:
         assert list(reader) == [metric]
 
 
 def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
     """Test that the CSV reader is set to use a comma."""
-    with CsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer._handle.write("# this is a comment\n")
@@ -170,9 +170,7 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
         "2,name2,0.3\n",
     ])
 
-    with CsvRecordReader.from_path(
-        tmp_path / "test.txt", SimpleMetric, comment_prefixes={"#"}
-    ) as reader:
+    with CsvReader.from_path(tmp_path / "test.txt", SimpleMetric, comment_prefixes={"#"}) as reader:
         assert list(reader) == [
             SimpleMetric(field1=1, field2="name", field3=0.2),
             SimpleMetric(field1=2, field2="name2", field3=0.3),
@@ -189,7 +187,7 @@ def test_reader_raises_exception_for_missing_fields(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
-        TsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric)
+        TsvReader.from_path(tmp_path / "test.txt", SimpleMetric)
 
 
 def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
@@ -202,7 +200,7 @@ def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
-        TsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric)
+        TsvReader.from_path(tmp_path / "test.txt", SimpleMetric)
 
 
 def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> None:
@@ -215,7 +213,7 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
     )
 
     with (
-        TsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader,
+        TsvReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader,
         pytest.raises(
             DecodeError,
             match=(
@@ -235,7 +233,7 @@ def test_reader_can_read_empty_file_ok(tmp_path: Path) -> None:
     (tmp_path / "test.txt").touch()
 
     with (
-        TsvRecordReader.from_path(tmp_path / "test.txt", SimpleMetric, header=False) as reader,
+        TsvReader.from_path(tmp_path / "test.txt", SimpleMetric, header=False) as reader,
     ):
         assert list(reader) == []
 
@@ -250,7 +248,7 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1,2,3,'\n")
 
-    class SimpleListReader(CsvRecordReader[RecordType]):
+    class SimpleListReader(CsvReader[RecordType]):
         @override
         def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:
             """A callback for overriding the decoding of builtin types and custom types."""
@@ -273,7 +271,7 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("field1,field2\nmy-name,null\n")
 
-    with CsvRecordReader.from_path(tmp_path / "test.txt", MyData) as reader:
+    with CsvReader.from_path(tmp_path / "test.txt", MyData) as reader:
         with pytest.raises(
             ValidationError,
             match=(
@@ -298,7 +296,7 @@ def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("0.1,1,hello,null\n0.2,null,null,'[1,2,3]'\n")
 
-    with CsvRecordReader.from_path(tmp_path / "test.txt", MyMetric, header=False) as reader:
+    with CsvReader.from_path(tmp_path / "test.txt", MyMetric, header=False) as reader:
         record1, record2 = list(iter(reader))
 
     assert record1 == MyMetric(0.1, 1, "hello", None)

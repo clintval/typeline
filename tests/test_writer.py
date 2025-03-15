@@ -6,9 +6,9 @@ from typing import Optional
 import pytest
 from typing_extensions import override
 
-from typeline import CsvRecordWriter
+from typeline import CsvWriter
 from typeline import RecordType
-from typeline import TsvRecordWriter
+from typeline import TsvWriter
 
 from .conftest import ComplexMetric
 from .conftest import SimpleMetric
@@ -21,17 +21,17 @@ def test_writer_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
         """A test metric."""
 
     with pytest.raises(ValueError, match="record_type is not a dataclass but must be!"):
-        CsvRecordWriter.from_path(tmp_path / "test.txt", MyTest)  # type: ignore[type-var]
+        CsvWriter.from_path(tmp_path / "test.txt", MyTest)  # type: ignore[type-var]
 
 
 def test_csv_writer_is_set_to_use_comma(tmp_path: Path) -> None:
     """Test that the CSV writer is set to use a comma."""
-    with CsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1,field2,field3\n"
 
-    with CsvRecordWriter(open(tmp_path / "test.txt", "w"), SimpleMetric) as writer:
+    with CsvWriter(open(tmp_path / "test.txt", "w"), SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1,field2,field3\n"
@@ -39,12 +39,12 @@ def test_csv_writer_is_set_to_use_comma(tmp_path: Path) -> None:
 
 def test_tsv_writer_is_set_to_use_tab(tmp_path: Path) -> None:
     """Test that the TSV writer is set to use a tab."""
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1\tfield2\tfield3\n"
 
-    with TsvRecordWriter(open(tmp_path / "test.txt", "w"), SimpleMetric) as writer:
+    with TsvWriter(open(tmp_path / "test.txt", "w"), SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1\tfield2\tfield3\n"
@@ -52,7 +52,7 @@ def test_tsv_writer_is_set_to_use_tab(tmp_path: Path) -> None:
 
 def test_writer_will_write_a_header(tmp_path: Path) -> None:
     """Test that the writer will write a header when asked to."""
-    with CsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1,field2,field3\n"
@@ -60,7 +60,7 @@ def test_writer_will_write_a_header(tmp_path: Path) -> None:
 
 def test_writer_will_allow_a_custom_delimiter(tmp_path: Path) -> None:
     """Test that the writer will write with a tab delimiter."""
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1\tfield2\tfield3\n"
@@ -69,7 +69,7 @@ def test_writer_will_allow_a_custom_delimiter(tmp_path: Path) -> None:
 def test_writer_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
     """Test that the writer will escape text when a delimiter is used in a field."""
     metric = SimpleMetric(field1=1, field2="my\tname", field3=0.2)
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
     assert (tmp_path / "test.txt").read_text() == "1\t'my\tname'\t0.2\n"
@@ -94,7 +94,7 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
         field11=None,
         field12=0.2,
     )
-    with TsvRecordWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
+    with TsvWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
     expected: str = (
@@ -123,7 +123,7 @@ def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
         field1: float
         field2: list[int]
 
-    class SimpleListWriter(CsvRecordWriter[RecordType]):
+    class SimpleListWriter(CsvWriter[RecordType]):
         @override
         def _encode(self, item: Any) -> Any:
             """A callback for overriding the encoding of builtin types and custom types."""
@@ -146,7 +146,7 @@ def test_writer_can_write_old_style_optional_types(tmp_path: Path) -> None:
         field2: Optional[int]
         field3: Optional[list[int]]
 
-    with CsvRecordWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
+    with CsvWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
         writer.write(MyMetric(0.1, 1, None))
         writer.write(MyMetric(0.2, None, [1, 2, 3]))
 
