@@ -1,6 +1,6 @@
 [project]
 name = "typeline"
-version = "0.10.0"
+version = "0.11.0"
 description = "Write dataclasses to delimited text formats and read them back again."
 authors = [{ name = "Clint Valentine", email = "valentine.clint@gmail.com" }]
 license = "MIT"
