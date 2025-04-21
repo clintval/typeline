@@ -136,6 +136,7 @@ ignore_missing_imports = true
 include = ["typeline/"]
 failOnWarnings = false
 reportAny = false
+reportExplicitAny = false
 pythonVersion = "3.10"
 
 [tool.ruff]

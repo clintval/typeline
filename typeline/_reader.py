@@ -115,7 +115,7 @@ class DelimitedDataReader(
         """Yield only lines in an iterator that do not start with a comment prefix."""
         for line in lines:
             self._line_count += 1
-            if not (stripped := line.strip()):
+            if not line or not (stripped := line.strip()):
                 continue
             elif any(stripped.startswith(prefix) for prefix in self._comment_prefixes):
                 continue

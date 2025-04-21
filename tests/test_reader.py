@@ -246,15 +246,15 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
         field1: float
         field2: list[int]
 
-    (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1,2,3,'\n")
+    (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1|2|3|'\n")
 
     class SimpleListReader(CsvReader[RecordType]):
         @override
         def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:
             """A callback for overriding the decoding of builtin types and custom types."""
             if get_origin(field_type) is list:
-                stripped: str = item.rstrip(",")
-                return f"[{stripped}]"
+                stripped: str = item.rstrip("|")
+                return f"[{stripped.translate(str.maketrans('|', ','))}]"
             return super()._decode(field_type, item=item)
 
     with SimpleListReader.from_path(tmp_path / "test.txt", MyMetric) as reader:
