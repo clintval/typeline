@@ -4,10 +4,8 @@ from typing import Any
 from typing import Optional
 
 import pytest
-from typing_extensions import override
 
 from typeline import CsvWriter
-from typeline import RecordType
 from typeline import TsvWriter
 
 from .conftest import ComplexMetric
@@ -118,23 +116,31 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
 def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
     """Test we can implement a writer with a custom encode callback."""
 
+    class MyCustomType:
+        """A custom class to test encoding."""
+
+        def __init__(self, value: str) -> None:
+            self.value = value
+
+        def __repr__(self) -> str:
+            return f"{self.value}!"
+
     @dataclass
     class MyMetric:
         field1: float
-        field2: list[int]
+        field2: MyCustomType
 
-    class SimpleListWriter(CsvWriter[RecordType]):
-        @override
-        def _encode(self, item: Any) -> Any:
-            """A callback for overriding the encoding of builtin types and custom types."""
-            if isinstance(item, list):
-                return ",".join(map(str, item))  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-            return item
+    def enc_hook(value: Any) -> Any:
+        """A custom encoding hook for the writer."""
+        if isinstance(value, MyCustomType):
+            print(value)
+            return repr(value)
+        return value
 
-    with SimpleListWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
-        writer.write(MyMetric(0.1, [1, 2, 3]))
+    with CsvWriter.from_path(tmp_path / "test.txt", MyMetric, enc_hook=enc_hook) as writer:
+        writer.write(MyMetric(0.1, MyCustomType("hello")))
 
-    assert (tmp_path / "test.txt").read_text() == "0.1,'1,2,3'\n"
+    assert (tmp_path / "test.txt").read_text() == "0.1,hello!\n"
 
 
 def test_writer_can_write_old_style_optional_types(tmp_path: Path) -> None:

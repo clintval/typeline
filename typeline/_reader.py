@@ -1,6 +1,6 @@
 import csv
 from abc import ABC
-from abc import abstractmethod
+from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
@@ -11,12 +11,10 @@ from dataclasses import is_dataclass
 from io import TextIOWrapper
 from os import linesep
 from pathlib import Path
-from types import NoneType
 from types import TracebackType
 from typing import Any
+from typing import Callable
 from typing import Generic
-from typing import final
-from typing import get_args
 
 from msgspec import DecodeError
 from msgspec import ValidationError
@@ -25,13 +23,13 @@ from msgspec.json import Decoder as JSONDecoder
 from typing_extensions import Self
 from typing_extensions import override
 
-from ._data_types import JsonType
 from ._data_types import RecordType
-from ._data_types import build_union
-from ._data_types import is_union
 
-DEFAULT_COMMENT_PREFIXES: set[str] = set([])
+DEFAULT_COMMENT_PREFIXES: set[str] = set()
 """The default line prefixes that will tell the reader to skip those lines."""
+
+JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
+"""JSON literal keywords that require parsing."""
 
 
 class DelimitedDataReader(
@@ -42,13 +40,18 @@ class DelimitedDataReader(
 ):
     """A reader for reading delimited text data into dataclasses."""
 
+    delimiter: str
+    """The delimiter used to separate fields in the delimited data."""
+
     def __init__(
         self,
         handle: TextIOWrapper,
         record_type: type[RecordType],
         /,
         header: bool = True,
-        comment_prefixes: set[str] = DEFAULT_COMMENT_PREFIXES,
+        comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
+        none_field: str = "",
+        dec_hook: Callable[[type, Any], Any] | None = None,
     ):
         """Instantiate a new delimited data reader.
 
@@ -57,6 +60,8 @@ class DelimitedDataReader(
             record_type: the type of the object we will be writing.
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
+            none_field: the string that is used in place of None for a field.
+            dec_hook: a custom decoder hook for the JSON decoder.
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
@@ -65,18 +70,21 @@ class DelimitedDataReader(
         self._handle: TextIOWrapper = handle
         self._line_count: int = 0
         self._record_type: type[RecordType] = record_type
-        self._comment_prefixes: set[str] = comment_prefixes
+        self._comment_prefixes: Collection[str] = set(comment_prefixes)
+        self._none_field: str = none_field
+        self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
+
+        # Build a JSON decoder for parsing string values into Python objects
+        self._json_decoder: JSONDecoder[Any] = JSONDecoder()
 
         # Inspect the record type and save the fields, field names, and field types.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in self._fields]
-        self._field_types: list[type | str | Any] = [field.type for field in self._fields]
-
-        # Build a JSON decoder for intermediate data conversion (after delimited; before dataclass).
-        self._decoder: JSONDecoder[dict[str, JsonType]] = JSONDecoder(strict=False)
+        self._field_types: list[type | Any | str] = [field.type for field in self._fields]
+        self._field_type_map: dict[str, type | Any | str] = {f.name: f.type for f in self._fields}
 
         # Build the delimited dictionary reader, filtering out any comment lines along the way.
-        self._reader: DictReader[str] = DictReader(
+        self._reader: DictReader[Any] = DictReader(
             self._filter_out_comments(handle),
             delimiter=self.delimiter,
             fieldnames=self._header if not header else None,
@@ -89,10 +97,34 @@ class DelimitedDataReader(
         if self._reader.fieldnames is not None and self._reader.fieldnames != self._header:
             raise ValueError("Fields of header do not match fields of dataclass!")
 
-    @property
-    @abstractmethod
-    def delimiter(self) -> str:
-        """The single-character string that is expected to separate the delimited data."""
+    @override
+    def __init_subclass__(cls, delimiter: str | None = None, **kwargs: object) -> None:
+        """Define a delimiter upon the subclass using metaclass programming."""
+        if delimiter is not None:
+            cls.delimiter = delimiter
+        super().__init_subclass__(**kwargs)
+
+    def with_decoder(self, dec_hook: Callable[[type, Any], Any]) -> Self:
+        """Chain an additional decoder hook.
+
+        This allows building up multiple transformations::
+
+            reader = (CsvReader.from_path("data.csv", MyData)
+                .with_decoder(custom_decoder_1)
+                .with_decoder(custom_decoder_2))
+
+        Args:
+            dec_hook: A function that takes (field_type, value) and returns the decoded value.
+
+        Returns:
+            Self for method chaining.
+        """
+        old_hook = self._dec_hook
+        if old_hook is None:
+            self._dec_hook = dec_hook
+        else:
+            self._dec_hook = lambda typ, val: old_hook(typ, dec_hook(typ, val))
+        return self
 
     @override
     def __enter__(self) -> Self:
@@ -121,77 +153,89 @@ class DelimitedDataReader(
                 continue
             yield line
 
+    def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:
+        """Decode a field value before parsing.
+
+        This method can be overridden in subclasses to provide custom decoding logic
+        for specific types. The method receives the field type and the raw string value,
+        and should return a value that can be parsed by msgspec (typically a string in
+        JSON format for complex types, or the value itself for simple types).
+
+        Args:
+            field_type: The type annotation for this field.
+            item: The raw value read from the delimited file.
+
+        Returns:
+            A value ready for msgspec to parse (often a JSON-formatted string).
+
+        Example:
+            >>> def _decode(self, field_type, item):
+            ...     # Convert comma-separated to JSON array format
+            ...     if get_origin(field_type) is list:
+            ...         return f"[{item.replace(',', ',')}]"
+            ...     return item
+        """
+        if self._dec_hook is not None:
+            return self._dec_hook(field_type, item)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        return item
+
+    def _preprocess(self, field_name: str, value: Any) -> Any:
+        """Preprocess a field value using two-phase parsing.
+
+        Phase 1: Transform the raw string using _decode() to make it parseable.
+        Phase 2: Parse JSON-like strings into Python objects.
+
+        This allows subclasses to override _decode() to handle custom types and formats
+        while keeping the JSON parsing logic consistent.
+
+        Args:
+            field_name: The name of the field being processed.
+            value: The raw value read from the delimited file.
+
+        Returns:
+            A Python object ready for msgspec.convert().
+        """
+        if value == self._none_field:
+            return None
+
+        if isinstance(value, str):
+            field_type = self._field_type_map.get(field_name, Any)
+            processed_value = self._decode(field_type, value)
+
+            if isinstance(processed_value, str):
+                stripped = processed_value.strip()
+                if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
+                    try:
+                        parsed: Any = self._json_decoder.decode(processed_value.encode("utf-8"))
+                        return parsed
+                    except DecodeError:
+                        return processed_value
+                else:
+                    return processed_value
+            else:
+                return processed_value
+
+        return value
+
     @override
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
         for record in self._reader:
-            as_builtins = self._csv_dict_to_json(record)
+            preprocessed = {key: self._preprocess(key, value) for key, value in record.items()}
             try:
-                yield convert(as_builtins, self._record_type, strict=False, str_keys=True)
+                yield convert(
+                    preprocessed,
+                    self._record_type,
+                    strict=False,
+                    str_keys=True,
+                )
             except ValidationError as exception:
                 raise ValidationError(
                     "Could not parse JSON-like object into requested structure:"
-                    + f" {sorted(as_builtins.items())}."
+                    + f" {preprocessed}."
                     + f" Requested structure: {self._record_type.__name__}."
                     + f" Original exception: {exception}"
                 ) from exception
-
-    def _csv_dict_to_json(self, record: dict[str, str]) -> dict[str, JsonType]:
-        """Build a list of builtin-like objects from a string-only dictionary."""
-        items: list[str] = []
-
-        for (name, item), field_type in zip(record.items(), self._field_types, strict=True):
-            decoded: str = self._decode(field_type, item)
-            decoded = decoded.replace("\t", "\\t")
-            decoded = decoded.replace("\r", "\\r")
-            decoded = decoded.replace("\n", "\\n")
-            items.append(f'"{name}":{decoded}')
-
-        json_string: str = f"{{{','.join(items)}}}"
-
-        try:
-            as_builtins: dict[str, JsonType] = self._decoder.decode(json_string)
-        except DecodeError as exception:
-            raise DecodeError(
-                f"Could not load delimited data into JSON-like format on line {self._line_count}."
-                + f" Built improperly formatted JSON: {json_string}."
-                + f" Original exception: {exception}."
-            ) from exception
-
-        return as_builtins
-
-    def _decode(self, field_type: type[Any] | str | Any, item: str) -> str:
-        """A callback for overriding the string formatting of builtin and custom types."""
-        if field_type is str:
-            return f'"{item}"'
-        elif field_type in (float, int):
-            return f"{item}"
-        elif field_type is bool:
-            return f"{item}".lower()
-
-        if not is_union(field_type):
-            return f"{item}"
-        else:
-            type_args: tuple[type, ...] = get_args(field_type)
-
-            if NoneType in type_args:
-                other_types: set[type]
-                if item == "" or item == "null":
-                    return "null"
-                elif len(type_args) == 2:
-                    other_types = set(type_args) - {NoneType}
-                    return self._decode(next(iter(other_types)), item)
-                else:
-                    other_types = set(type_args) - {NoneType}
-                    return self._decode(build_union(*other_types), item)
-            elif str in type_args:
-                return f'"{item}"'
-            elif any(_type in type_args for _type in (float, int)):
-                return f"{item}"
-            elif bool in type_args:
-                return f"{item}".lower()
-
-        return f"{item}"
 
     def close(self) -> None:
         """Close all opened resources."""
@@ -205,22 +249,33 @@ class DelimitedDataReader(
         record_type: type[RecordType],
         /,
         header: bool = True,
-        comment_prefixes: set[str] = DEFAULT_COMMENT_PREFIXES,
+        comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
+        none_field: str = "",
+        dec_hook: Callable[[type, Any], Any] | None = None,
     ) -> Self:
         """Construct a delimited data reader from a file path.
 
         Args:
             path: the path to the file to read delimited data from.
-            record_type: the type of the object we will be writing.
+            record_type: the type of the object we will be reading.
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
+            none_field: the string that is used in place of None for a field.
+            dec_hook: a custom decoder hook for the underlying JSON decoder.
         """
         handle = Path(path).expanduser().open("r")
-        reader = cls(handle, record_type, header=header, comment_prefixes=comment_prefixes)
+        reader = cls(
+            handle,
+            record_type,
+            header=header,
+            comment_prefixes=comment_prefixes,
+            none_field=none_field,
+            dec_hook=dec_hook,
+        )
         return reader
 
 
-class CsvReader(DelimitedDataReader[RecordType]):
+class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
     r"""A reader for reading comma-delimited data into dataclasses.
 
     Example:
@@ -247,14 +302,8 @@ class CsvReader(DelimitedDataReader[RecordType]):
         ```
     """
 
-    @property
-    @override
-    @final
-    def delimiter(self) -> str:
-        return ","
 
-
-class TsvReader(DelimitedDataReader[RecordType]):
+class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
     r"""A reader for reading tab-delimited data into dataclasses.
 
     Example:
@@ -280,9 +329,3 @@ class TsvReader(DelimitedDataReader[RecordType]):
 
         ```
     """
-
-    @property
-    @override
-    @final
-    def delimiter(self) -> str:
-        return "\t"
