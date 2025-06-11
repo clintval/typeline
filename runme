@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+from pathlib import Path
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from fgpyo.util.metric import Metric
+from typeline import TsvReader as TypelineReader
+from dataclass_csv import DataclassReader as DataclassCsvReader
+from dataclass_io import DataclassReader as DataclassIoReader
+
+bed = Path("~/Downloads/repeat.bed").expanduser()
+
+# Preferred dataclass due to having optional field parameters and no inheritance
+@dataclass(slots=True)
+class Bed6:
+    refname: str
+    start: int
+    end: int
+    name: str
+    score: int | None
+    strand: str | None
+
+# Dataclass for implementations that do not support new-style optional field types
+@dataclass(slots=True)
+class Bed6WithOldStyleOptional:
+    refname: str
+    start: int
+    end: int
+    name: str
+    score: Optional[int]
+    strand: Optional[str]
+
+with open(bed) as handle:
+    reader = DataclassCsvReader(handle, Bed6WithOldStyleOptional, delimiter="\t")
+    for record in reader:
+        continue
+
+with TypelineReader.from_path(bed, Bed6) as reader:
+    for record in reader:
+        continue

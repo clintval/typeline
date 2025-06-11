@@ -7,11 +7,9 @@ from typing import get_origin
 import pytest
 from msgspec import DecodeError
 from msgspec import ValidationError
-from typing_extensions import override
 
 from typeline import CsvReader
 from typeline import CsvWriter
-from typeline import RecordType
 from typeline import TsvReader
 from typeline import TsvWriter
 
@@ -248,16 +246,14 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1|2|3|'\n")
 
-    class SimpleListReader(CsvReader[RecordType]):
-        @override
-        def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:
-            """A callback for overriding the decoding of builtin types and custom types."""
-            if get_origin(field_type) is list:
-                stripped: str = item.rstrip("|")
-                return f"[{stripped.translate(str.maketrans('|', ','))}]"
-            return super()._decode(field_type, item=item)
+    def dec_hook(field_type: Any, item: Any) -> Any:
+        """A callback for overriding the decoding of builtin types and custom types."""
+        if get_origin(field_type) is list:
+            stripped: str = item.rstrip("|")
+            return f"[{stripped.translate(str.maketrans('|', ','))}]"
+        return item
 
-    with SimpleListReader.from_path(tmp_path / "test.txt", MyMetric) as reader:
+    with CsvReader.from_path(tmp_path / "test.txt", MyMetric, dec_hook=dec_hook) as reader:
         assert list(reader) == [MyMetric(0.1, [1, 2, 3])]
 
 
@@ -294,10 +290,18 @@ def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:
         field3: Optional[str]
         field4: Optional[list[int]]
 
-    (tmp_path / "test.txt").write_text("0.1,1,hello,null\n0.2,null,null,'[1,2,3]'\n")
+    (tmp_path / "test.txt").write_text("0.1,1,hello,\n0.2,,,'[1,2,3]'\n")
 
     with CsvReader.from_path(tmp_path / "test.txt", MyMetric, header=False) as reader:
         record1, record2 = list(iter(reader))
 
     assert record1 == MyMetric(0.1, 1, "hello", None)
     assert record2 == MyMetric(0.2, None, None, [1, 2, 3])
+
+
+def test_reader_should_be_usable_right_after_file_handle_open(tmp_path: Path) -> None:
+    """Test that the reader should be usable right after file handle open."""
+    (tmp_path / "test.txt").write_text("field1,field2,field3\n1,name,\n")
+
+    with open(tmp_path / "test.txt", "r") as handle, CsvReader(handle, SimpleMetric) as reader:
+        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=None)]
