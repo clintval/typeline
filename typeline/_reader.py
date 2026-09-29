@@ -32,6 +32,8 @@ from msgspec.json import Decoder as JSONDecoder
 from typing_extensions import Never
 from typing_extensions import NoReturn
 from typing_extensions import Self
+from typing_extensions import TypedDict
+from typing_extensions import Unpack
 from typing_extensions import override
 
 from ._data_types import RecordType
@@ -44,6 +46,23 @@ JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 
 _PARAMETERIZED_READERS: dict[tuple[type[Any], type[Any]], type[Any]] = {}
 """A cache of reader subclasses bound to a concrete record type."""
+
+
+class ReaderOptions(TypedDict, total=False, closed=True):
+    """The options of a delimited data reader."""
+
+    header: bool
+    """Whether we expect the first line to be a header or not."""
+
+    comment_prefixes: Collection[str]
+    """Skip lines that have any of these string prefixes."""
+
+    none_field: str
+    """The string that is used in place of None for a field."""
+
+    dec_hook: Callable[[type, Any], Any] | None
+    """A custom decoder hook for the JSON decoder."""
+
 
 OwnerType = TypeVar("OwnerType", covariant=True)
 """The type variable for the class a reader constructor is accessed on."""
@@ -152,6 +171,7 @@ class DelimitedDataReader(
         self,
         handle: TextIOWrapper,
         /,
+        *,
         header: bool = True,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
         none_field: str = "",
@@ -389,33 +409,16 @@ class DelimitedDataReader(
 
     @_SubscriptableClassmethod
     @classmethod
-    def from_path(
-        cls,
-        path: Path | str,
-        /,
-        header: bool = True,
-        comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
-        none_field: str = "",
-        dec_hook: Callable[[type, Any], Any] | None = None,
-    ) -> Self:
+    def from_path(cls, path: Path | str, /, **options: Unpack[ReaderOptions]) -> Self:
         """Construct a delimited data reader from a file path.
 
         Args:
             path: the path to the file to read delimited data from.
-            header: whether we expect the first line to be a header or not.
-            comment_prefixes: skip lines that have any of these string prefixes.
-            none_field: the string that is used in place of None for a field.
-            dec_hook: a custom decoder hook for the underlying JSON decoder.
+            options: the options of the reader, left at the reader's defaults when not given.
         """
         handle = Path(path).expanduser().open("r")
         try:
-            return cls(
-                handle,
-                header=header,
-                comment_prefixes=comment_prefixes,
-                none_field=none_field,
-                dec_hook=dec_hook,
-            )
+            return cls(handle, **options)
         except BaseException:
             handle.close()
             raise

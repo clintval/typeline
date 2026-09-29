@@ -1,6 +1,7 @@
 from ._data_types import RecordType
 from ._reader import CsvReader
 from ._reader import DelimitedDataReader
+from ._reader import ReaderOptions
 from ._reader import TsvReader
 from ._writer import CsvWriter
 from ._writer import DelimitedDataWriter
@@ -11,6 +12,7 @@ __all__ = [
     "CsvWriter",
     "DelimitedDataReader",
     "DelimitedDataWriter",
+    "ReaderOptions",
     "RecordType",
     "TsvReader",
     "TsvWriter",

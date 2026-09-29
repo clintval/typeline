@@ -44,7 +44,7 @@ poethepoet = ">=0.33.0"
 
 [tool.poetry.group.dev.dependencies]
 basedpyright = "^1.28"
-mypy = "^1.15"
+mypy = "^2.3"
 pytest = "^8.3"
 pytest-cov = "^6.0"
 pytest-doctestplus = "^1.4"

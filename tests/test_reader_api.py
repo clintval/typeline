@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typing_extensions import Unpack
 from typing_extensions import assert_type
+from typing_extensions import override
 
 from typeline import CsvReader
+from typeline import ReaderOptions
 from typeline import RecordType
 from typeline import TsvReader
 
@@ -173,3 +176,21 @@ def test_from_path_closes_the_file_when_the_reader_cannot_be_built(
 
     assert len(opened) == 1
     assert opened[0].closed
+
+
+def test_from_path_uses_the_defaults_of_a_subclass(tmp_path: Path) -> None:
+    """Test that from_path leaves options it is not given at the defaults of the reader's class."""
+
+    class HeaderlessCsvReader(CsvReader[RecordType]):
+        """A comma-delimited reader that does not expect a header by default."""
+
+        @override
+        def __init__(self, handle: TextIOWrapper, /, **options: Unpack[ReaderOptions]) -> None:
+            _ = options.setdefault("header", False)
+            super().__init__(handle, **options)
+
+    path = tmp_path / "test.csv"
+    _ = path.write_text("1,name\n")
+
+    with HeaderlessCsvReader.from_path[MyData](path) as reader:
+        assert list(reader) == EXPECTED
