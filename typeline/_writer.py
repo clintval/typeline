@@ -26,6 +26,7 @@ from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._data_types import RecordType
+from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import type_name
@@ -93,11 +94,15 @@ class DelimitedDataWriter(
 
         # Inspect the record type and save the fields and field names.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
-        self._header: tuple[str, ...] = tuple(field.name for field in self._fields)
         self._field_type_map: dict[str, Any] = field_types(record_type)
+        self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        self._header: tuple[str, ...] = tuple(
+            field.name for field in self._fields if field.name != self._extra_field
+        )
         self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
             (name, find_codec(field_type, codecs))
             for name, field_type in self._field_type_map.items()
+            if name != self._extra_field
         ]
 
         # Build a JSON encoder for writing values that are not strings once converted to builtins.
@@ -170,9 +175,12 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        self._writer.writerow([
+        row = [
             self._format(name, getattr(record, name), codec) for name, codec in self._field_codecs
-        ])
+        ]
+        if self._extra_field is not None:
+            row.extend(getattr(record, self._extra_field))
+        self._writer.writerow(row)
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""

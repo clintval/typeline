@@ -108,6 +108,28 @@ field1	field2	field3
 
 ```
 
+### Extra Columns
+
+A record can end with an `ExtraColumns` field, which holds any columns past its other fields as text.
+Readers fill it, writers write it back, and a header only needs to name the other fields.
+
+```pycon
+>>> from typeline import ExtraColumns
+>>>
+>>> @dataclass
+... class Region:
+...     name: str
+...     start: int
+...     extra: ExtraColumns = ()
+>>>
+>>> _ = open(temp_file.name, "w").write("exon1\t10\n\nexon2\t20\t0.9\tHIGH\n")
+>>>
+>>> with TsvReader.from_path[Region](temp_file.name, header=False) as reader:
+...     print(list(reader))
+[Region(name='exon1', start=10, extra=()), Region(name='exon2', start=20, extra=('0.9', 'HIGH'))]
+
+```
+
 ### Custom Field Formats
 
 Lists, dicts, sets, enums, and nested dataclasses are written as JSON by default.

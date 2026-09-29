@@ -28,6 +28,7 @@ from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._data_types import RecordType
 from ._data_types import accepts_none
+from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import is_text
@@ -112,11 +113,15 @@ class DelimitedDataReader(
 
         # Inspect the record type, and decide once how each field is read from its text.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
-        self._header: list[str] = [field.name for field in self._fields]
         self._field_type_map: dict[str, Any] = field_types(record_type)
+        self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        self._header: list[str] = [
+            field.name for field in self._fields if field.name != self._extra_field
+        ]
         self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
+            if name != self._extra_field
         ]
 
         # Read rows as lists, filtering out any comment lines along the way.
@@ -130,6 +135,8 @@ class DelimitedDataReader(
 
         # Protect the user from the case where a header was specified, but a data line was found!
         found: list[str] | None = next(self._rows, None) if header else None
+        if found is not None and self._extra_field is not None:
+            found = found[: len(self._header)]
         if found is not None and found != self._header:
             missing: list[str] = [name for name in self._header if name not in found]
             unexpected: list[str] = [name for name in found if name not in self._header]
@@ -228,16 +235,20 @@ class DelimitedDataReader(
         """Yield converted records from the delimited data file."""
         width = len(self._header)
         field_readers = self._field_readers
+        extra_field = self._extra_field
         for row in self._rows:
-            if len(row) != width:
+            if len(row) != width and (extra_field is None or len(row) < width):
+                at_least = "" if extra_field is None else "at least "
                 raise ValueError(
-                    f"Expected {width} fields but found {len(row)} on line"
+                    f"Expected {at_least}{width} fields but found {len(row)} on line"
                     + f" {self._line_count} for record type: {self._record_type.__name__}."
                 )
             preprocessed = {
                 name: text if read is None else read(text)
-                for (name, read), text in zip(field_readers, row, strict=True)
+                for (name, read), text in zip(field_readers, row, strict=False)
             }
+            if extra_field is not None:
+                preprocessed[extra_field] = tuple(row[width:])
             try:
                 yield convert(
                     preprocessed,

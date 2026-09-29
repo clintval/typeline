@@ -9,11 +9,14 @@ from typing import Any
 from typing import ClassVar
 from typing import Literal
 from typing import Protocol
+from typing import TypeAlias
 from typing import TypeVar
 from typing import Union  # pyright: ignore[reportDeprecated]
 from typing import get_args
 from typing import get_origin
 from typing import get_type_hints
+
+from typing_extensions import override
 
 
 class DataclassInstance(Protocol):
@@ -92,3 +95,47 @@ def find_codec(
         except TypeError:
             continue
     return None
+
+
+class _ExtraColumnsMarker:
+    """Marks the field of a record that holds the columns past its other fields."""
+
+    @override
+    def __repr__(self) -> str:
+        return "ExtraColumns"
+
+
+EXTRA_COLUMNS_MARKER = _ExtraColumnsMarker()
+"""The marker in `ExtraColumns` that readers and writers look for."""
+
+ExtraColumns: TypeAlias = Annotated[tuple[str, ...], EXTRA_COLUMNS_MARKER]
+"""The type of a record's last field that holds any columns past its other fields, as text.
+
+Example:
+    ```python
+    @dataclass
+    class Region:
+        name: str
+        start: int
+        extra: ExtraColumns = ()
+    ```
+"""
+
+
+def extra_columns_field(record_type: type[Any], field_type_map: dict[str, Any]) -> str | None:
+    """Return the name of a record's `ExtraColumns` field, which must be its last field."""
+    names = [
+        name
+        for name, field_type in field_type_map.items()
+        if get_origin(field_type) is Annotated and EXTRA_COLUMNS_MARKER in get_args(field_type)
+    ]
+    if not names:
+        return None
+    last = list(field_type_map)[-1]
+    misplaced = [name for name in names if name != last]
+    if misplaced:
+        raise TypeError(
+            f"The ExtraColumns field of {record_type.__name__} must be its last field,"
+            + f" but '{misplaced[0]}' is not!"
+        )
+    return last
