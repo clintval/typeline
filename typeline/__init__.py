@@ -1,5 +1,6 @@
 from ._binding import FixedRecordType
 from ._comment import Comment
+from ._data_types import ExtraColumns
 from ._data_types import RecordType
 from ._reader import CsvReader
 from ._reader import DelimitedDataReader
@@ -19,6 +20,7 @@ __all__ = [
     "CsvWriter",
     "DelimitedDataReader",
     "DelimitedDataWriter",
+    "ExtraColumns",
     "FieldCodec",
     "FixedRecordType",
     "ReaderOptions",
