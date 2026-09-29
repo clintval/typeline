@@ -33,6 +33,7 @@ from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import is_text
 from ._data_types import type_name
+from ._files import open_for_reading
 from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
@@ -279,7 +280,7 @@ class DelimitedDataReader(
             path: the path to the file to read delimited data from.
             options: the options of the reader, left at the reader's defaults when not given.
         """
-        handle = Path(path).expanduser().open("r", encoding="utf-8-sig", newline="")
+        handle = open_for_reading(path)
         try:
             return cls(handle, **options)
         except BaseException:

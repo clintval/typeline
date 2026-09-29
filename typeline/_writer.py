@@ -30,6 +30,7 @@ from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import type_name
+from ._files import open_for_writing
 from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
@@ -214,7 +215,7 @@ class DelimitedDataWriter(
             options: the options of the writer, left at the writer's defaults when not given.
         """
         _refuse_unknown_options(cls, options)
-        handle = Path(path).expanduser().open("w", encoding="utf-8", newline="")
+        handle = open_for_writing(path)
         try:
             return cls(handle, **options)
         except BaseException:
