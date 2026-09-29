@@ -8,47 +8,41 @@ on:
       - "!**"
   workflow_call:
 
+permissions: {}
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   POETRY_VERSION: 2.1.1
 
 jobs:
   unit-tests:
+    name: unit-tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # to check out the repository
     strategy:
       matrix:
         PYTHON_VERSION: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: "true"
+          persist-credentials: false
 
       - name: Set up Python ${{ matrix.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.PYTHON_VERSION }}
 
-      - name: Get full Python version
-        id: full-python-version
-        shell: bash
-        run: echo "version=$(python -c "import sys; print('-'.join(str(v) for v in sys.version_info))")" >> "$GITHUB_OUTPUT"
-
       - name: Install and configure Poetry
-        uses: snok/install-poetry@v1
+        uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263 # v1.4.2
         with:
           version: ${{ env.POETRY_VERSION }}
           installer-parallel: true
-
-      - name: Set up cache
-        uses: actions/cache@v4
-        id: cache
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ steps.full-python-version.outputs.version }}-${{ hashFiles('**/poetry.lock') }}
-
-      - name: Ensure cache is healthy
-        if: steps.cache.outputs.cache-hit == 'true'
-        shell: bash
-        run: poetry run pip --version >/dev/null 2>&1 || rm -rf .venv
 
       - name: Install the library
         run: poetry install -v
