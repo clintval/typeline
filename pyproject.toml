@@ -141,7 +141,7 @@ module = ".conftest"
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["typeline/", "tests/test_reader_api.py", "tests/test_writer_api.py", "tests/test_real_world_examples.py"]
+include = ["typeline/", "tests/test_counter_pivot.py", "tests/test_reader_api.py", "tests/test_writer_api.py", "tests/test_real_world_examples.py"]
 enableTypeIgnoreComments = false
 reportUnnecessaryTypeIgnoreComment = "error"
 reportImportCycles = false

@@ -1,10 +1,12 @@
 import csv
+from collections import Counter
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
+from enum import StrEnum
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -13,6 +15,7 @@ from typing import Callable
 from typing import Generic
 from typing import TextIO
 from typing import cast
+from typing import get_origin
 
 from msgspec import DecodeError
 from msgspec import ValidationError
@@ -28,6 +31,7 @@ from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._data_types import RecordType
 from ._data_types import accepts_none
+from ._data_types import counter_columns_field
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
@@ -122,14 +126,25 @@ class DelimitedDataReader(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        self._counter: tuple[str, type[StrEnum]] | None = counter_columns_field(
+            record_type, self._field_type_map
+        )
+        counter_field = None if self._counter is None else self._counter[0]
         self._header: list[str] = [
-            field.name for field in self._fields if field.name != self._extra_field
+            field.name
+            for field in self._fields
+            if field.name not in (self._extra_field, counter_field)
         ]
         self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
-            if name != self._extra_field
+            if name not in (self._extra_field, counter_field)
         ]
+        if counter_field is not None and not header:
+            raise ValueError(
+                f"The CounterColumns field '{counter_field}' of {record_type.__name__}"
+                + " needs a header to name its columns!"
+            )
 
         # Read rows as lists, filtering out any comment lines along the way.
         self._rows: Iterator[list[str]] = csv.reader(
@@ -144,6 +159,7 @@ class DelimitedDataReader(
         self._width: int = len(self._header)
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
+        self._member_positions: list[tuple[StrEnum, int]] = []
         found: list[str] | None = next(self._rows, None) if header else None
         if found is not None:
             repeated: list[str] = sorted({name for name in found if found.count(name) > 1})
@@ -152,8 +168,11 @@ class DelimitedDataReader(
                     f"Fields of header repeat a name! Header: {found}."
                     + f" Repeated in header: {repeated}."
                 )
+            members = {} if self._counter is None else {m.value: m for m in self._counter[1]}
             missing: list[str] = [name for name in self._header if name not in found]
-            unexpected: list[str] = [name for name in found if name not in self._header]
+            unexpected: list[str] = [
+                name for name in found if name not in self._header and name not in members
+            ]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     "Fields of header do not match fields of dataclass!"
@@ -163,10 +182,15 @@ class DelimitedDataReader(
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
             self._width = len(found)
-            if found[: len(self._header)] != self._header:
+            self._member_positions = [
+                (members[name], index) for index, name in enumerate(found) if name in members
+            ]
+            if self._member_positions or found[: len(self._header)] != self._header:
                 self._positions = [found.index(name) for name in self._header]
                 self._extra_positions = [
-                    index for index in range(len(found)) if index not in self._positions
+                    index
+                    for index, name in enumerate(found)
+                    if name not in self._header and name not in members
                 ]
 
     @override
@@ -199,6 +223,20 @@ class DelimitedDataReader(
                     self._on_comment(Comment(self._line_count, line.rstrip("\r\n")))
                 continue
             yield line
+
+    def _read_counts(self, row: list[str], name: str, enum: type[StrEnum]) -> Counter[StrEnum]:
+        """Read the count of each member from its column, counting members without one as 0."""
+        counts: Counter[StrEnum] = Counter(dict.fromkeys(enum, 0))
+        for member, index in self._member_positions:
+            text = row[index]
+            try:
+                counts[member] = int(text)
+            except ValueError as exception:
+                raise ValueError(
+                    f"Could not read column '{member.value}' of field '{name}' as a count"
+                    + f" from '{text}' on line {self._line_count}!"
+                ) from exception
+        return counts
 
     def _field_reader(
         self, name: str, field_type: Any, codec: FieldCodec[Any] | None
@@ -244,7 +282,8 @@ class DelimitedDataReader(
 
     def _convert_hook(self, type_: Any, obj: Any) -> Any:
         """Pass through values a codec already built, and hand other custom types to dec_hook."""
-        if isinstance(type_, type) and isinstance(obj, type_):
+        kind = get_origin(type_) or type_
+        if isinstance(kind, type) and isinstance(obj, kind):
             return obj
         if self._dec_hook is not None:
             return self._dec_hook(type_, obj)
@@ -259,6 +298,7 @@ class DelimitedDataReader(
         extra_positions = self._extra_positions
         field_readers = self._field_readers
         extra_field = self._extra_field
+        counter = self._counter
         for row in self._rows:
             if len(row) != width and (extra_field is None or len(row) < width):
                 at_least = "" if extra_field is None else "at least "
@@ -276,6 +316,8 @@ class DelimitedDataReader(
             elif extra_field is not None:
                 extra = [row[index] for index in extra_positions]
                 preprocessed[extra_field] = (*extra, *row[width:])
+            if counter is not None:
+                preprocessed[counter[0]] = self._read_counts(row, *counter)
             try:
                 yield convert(
                     preprocessed,

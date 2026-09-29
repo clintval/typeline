@@ -171,6 +171,46 @@ Without quoting, a writer refuses text that holds the delimiter or a line break 
 
 ```
 
+### Counter Columns
+
+A `CounterColumns[E]` field is a `Counter[E]` held in one column per member of the `StrEnum` `E`, each named after its member's value.
+Writers write every member's count in enum order, where the field sits among the other fields.
+Readers need a header to find the member columns by name, wherever they sit, and count members without a column as 0.
+
+```pycon
+>>> from collections import Counter
+>>> from enum import StrEnum
+>>> from typeline import CounterColumns
+>>>
+>>> class Base(StrEnum):
+...     A = "A"
+...     C = "C"
+...     G = "G"
+...     T = "T"
+>>>
+>>> @dataclass
+... class Pileup:
+...     position: int
+...     counts: CounterColumns[Base]
+>>>
+>>> with TsvWriter.from_path[Pileup](temp_file.name) as writer:
+...     writer.write_header()
+...     writer.write(Pileup(100, Counter({Base.A: 12, Base.G: 3})))
+>>>
+>>> print(open(temp_file.name).read(), end="")
+position	A	C	G	T
+100	12	0	3	0
+>>>
+>>> _ = open(temp_file.name, "w").write("position\tT\tA\n101\t2\t9\n")
+>>>
+>>> with TsvReader.from_path[Pileup](temp_file.name) as reader:
+...     print(list(reader))
+[Pileup(position=101, counts=Counter({<Base.A: 'A'>: 9, <Base.T: 'T'>: 2, <Base.C: 'C'>: 0, <Base.G: 'G'>: 0}))]
+
+```
+
+A record may have one `CounterColumns` field, and an `ExtraColumns` field after it holds the columns past its member columns.
+
 ### Custom Field Formats
 
 Lists, dicts, sets, enums, and nested dataclasses are written as JSON by default.

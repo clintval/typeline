@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
+from enum import StrEnum
 from inspect import Parameter
 from inspect import signature
 from os import linesep
@@ -26,6 +27,7 @@ from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._data_types import RecordType
+from ._data_types import counter_columns_field
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
@@ -104,8 +106,17 @@ class DelimitedDataWriter(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        self._counter: tuple[str, type[StrEnum]] | None = counter_columns_field(
+            record_type, self._field_type_map
+        )
+        self._counted: frozenset[StrEnum] = frozenset(
+            () if self._counter is None else self._counter[1]
+        )
         self._header: tuple[str, ...] = tuple(
-            field.name for field in self._fields if field.name != self._extra_field
+            column
+            for field in self._fields
+            if field.name != self._extra_field
+            for column in self._columns_of(field.name)
         )
         self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
             (name, find_codec(field_type, codecs))
@@ -141,6 +152,24 @@ class DelimitedDataWriter(
         """Exit this context while closing all open resources."""
         self.close()
         return None
+
+    def _columns_of(self, field_name: str) -> tuple[str, ...]:
+        """Return the columns a field is written into: one per member for a Counter field."""
+        if self._counter is not None and self._counter[0] == field_name:
+            return tuple(member.value for member in self._counter[1])
+        return (field_name,)
+
+    def _format_counts(
+        self, counts: Mapping[Any, object], name: str, enum: type[StrEnum]
+    ) -> list[str]:
+        """Write the count of each member of a Counter field in enum order, 0 when absent."""
+        for key in counts:
+            if key not in self._counted:
+                raise ValueError(
+                    f"Could not write field '{name}', which counts '{key}'"
+                    + f" that is not a member of {enum.__name__}!"
+                )
+        return [self._format(name, counts.get(member, 0), None) for member in enum]
 
     def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
         """Write the value of one field into its text."""
@@ -183,9 +212,13 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        row = [
-            self._format(name, getattr(record, name), codec) for name, codec in self._field_codecs
-        ]
+        counter = self._counter
+        row: list[str] = []
+        for name, codec in self._field_codecs:
+            if counter is not None and name == counter[0]:
+                row.extend(self._format_counts(getattr(record, name), *counter))
+            else:
+                row.append(self._format(name, getattr(record, name), codec))
         if self._extra_field is not None:
             row.extend(getattr(record, self._extra_field))
         if not self._quoting and any(map(self._needs_quoting, row)):
