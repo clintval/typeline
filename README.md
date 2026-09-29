@@ -63,6 +63,13 @@ MyData(field1=20, field2='test2', field3=None)
 
 ```
 
+A reader from `from_path` closes its file once it is read to the end, so reading everything into a list needs no `with` block.
+
+```pycon
+>>> records = list(TsvReader.from_path[MyData](temp_file.name))
+
+```
+
 ### Any Text Stream
 
 To use an open text stream instead of a path, subscript the reader or writer class itself.

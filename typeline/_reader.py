@@ -108,6 +108,7 @@ class DelimitedDataReader(
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
         self._on_comment: Callable[[Comment], None] | None = on_comment
+        self._close_when_read: bool = False
 
         # Build a JSON decoder for parsing string values into Python objects
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
@@ -265,6 +266,8 @@ class DelimitedDataReader(
                     + f" Requested structure: {self._record_type.__name__}."
                     + f" Original exception: {exception}"
                 ) from exception
+        if self._close_when_read:
+            self.close()
 
     def close(self) -> None:
         """Close all opened resources."""
@@ -282,10 +285,12 @@ class DelimitedDataReader(
         """
         handle = open_for_reading(path)
         try:
-            return cls(handle, **options)
+            reader = cls(handle, **options)
         except BaseException:
             handle.close()
             raise
+        reader._close_when_read = True
+        return reader
 
 
 class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
