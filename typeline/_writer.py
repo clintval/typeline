@@ -35,7 +35,7 @@ class WriterOptions(TypedDict, total=False, closed=True):
     """The options of a delimited data writer."""
 
     none_field: str
-    """The text written for None. With the default `""`, an empty `str | None` reads back as None."""
+    """The text written for None; with the default `""`, an empty `str | None` reads as None."""
 
     codecs: Codecs
     """How to write a field into its text, by the field's type."""
