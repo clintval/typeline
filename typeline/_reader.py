@@ -189,7 +189,17 @@ class DelimitedDataReader(
 
         # Protect the user from the case where a header was specified, but a data line was found!
         if self._reader.fieldnames is not None and self._reader.fieldnames != self._header:
-            raise ValueError("Fields of header do not match fields of dataclass!")
+            found: list[str] = list(self._reader.fieldnames)
+            missing: list[str] = [name for name in self._header if name not in found]
+            unexpected: list[str] = [name for name in found if name not in self._header]
+            raise ValueError(
+                "Fields of header do not match fields of dataclass!"
+                + f" Header: {found}."
+                + f" Fields of {record_type.__name__}: {self._header}."
+                + (f" Missing from header: {missing}." if missing else "")
+                + (f" Unexpected in header: {unexpected}." if unexpected else "")
+                + ("" if missing or unexpected else " The fields are out of order.")
+            )
 
     @override
     def __init_subclass__(cls, delimiter: str | None = None, **kwargs: object) -> None:
@@ -333,6 +343,15 @@ class DelimitedDataReader(
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
         for record in self._reader:
+            if None in record or None in record.values():
+                row: dict[Any, Any] = record  # DictReader keys overflow under None
+                extra: list[str] = row.get(None, [])
+                present: int = sum(v is not None for k, v in row.items() if k is not None)
+                found: int = present + len(extra)
+                raise ValueError(
+                    f"Expected {len(self._header)} fields but found {found} on line"
+                    + f" {self._line_count} for record type: {self._record_type.__name__}."
+                )
             preprocessed = {key: self._preprocess(key, value) for key, value in record.items()}
             try:
                 yield convert(

@@ -175,6 +175,41 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
         ]
 
 
+@pytest.mark.parametrize(
+    "header,detail",
+    [
+        pytest.param(
+            "field1\tfield2",
+            "Header: ['field1', 'field2']. Fields of SimpleMetric: ['field1', 'field2', 'field3']."
+            + " Missing from header: ['field3'].",
+            id="missing",
+        ),
+        pytest.param(
+            "field1\tfield2\tfield3\tfield4",
+            "Unexpected in header: ['field4'].",
+            id="unexpected",
+        ),
+        pytest.param(
+            "field1\tfield2\tfield4",
+            "Missing from header: ['field3']. Unexpected in header: ['field4'].",
+            id="missing-and-unexpected",
+        ),
+        pytest.param("field3\tfield2\tfield1", "The fields are out of order.", id="out-of-order"),
+    ],
+)
+def test_reader_names_how_the_header_differs_from_the_dataclass(
+    tmp_path: Path, header: str, detail: str
+) -> None:
+    """Test the header mismatch error shows both headers and how they differ."""
+    (tmp_path / "test.txt").write_text(f"{header}\n")
+
+    with pytest.raises(ValueError) as exception:
+        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
+
+    assert str(exception.value).startswith("Fields of header do not match fields of dataclass!")
+    assert detail in str(exception.value)
+
+
 def test_reader_raises_exception_for_missing_fields(tmp_path: Path) -> None:
     """Test the reader raises an exception for missing fields."""
     (tmp_path / "test.txt").write_text(
@@ -199,6 +234,27 @@ def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
         TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
+
+
+@pytest.mark.parametrize(
+    "line,found",
+    [
+        pytest.param("1\tname", 2, id="too-few-fields"),
+        pytest.param("1\tname\t0.2\thi-five", 4, id="too-many-fields"),
+    ],
+)
+def test_reader_raises_exception_for_a_record_with_the_wrong_number_of_fields(
+    tmp_path: Path, line: str, found: int
+) -> None:
+    """Test the reader names the line and field counts when a record is too short or too long."""
+    (tmp_path / "test.txt").write_text("\n".join(["field1\tfield2\tfield3", "1\tname\t0.2", line]))
+
+    with TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader:
+        with pytest.raises(
+            ValueError,
+            match=f"Expected 3 fields but found {found} on line 3 for record type: SimpleMetric.",
+        ):
+            _ = list(reader)
 
 
 def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> None:
