@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  POETRY_VERSION: 2.1.1
+  UV_VERSION: 0.12.20
 
 jobs:
   on-main-branch-check:
@@ -50,15 +50,8 @@ jobs:
       contents: read  # to check out the repository in the called workflow
     uses: ./.github/workflows/tests.yml # zizmor: ignore[self-repository] GitHub does not document $/ for reusable workflows
 
-  build-wheels:
-    name: build-wheels
-    needs: unit-tests
-    permissions:
-      contents: read  # to check out the repository in the called workflow
-    uses: ./.github/workflows/wheels.yml # zizmor: ignore[self-repository] GitHub does not document $/ for reusable workflows
-
-  build-sdist:
-    name: build source distribution
+  build:
+    name: build
     needs: unit-tests
     runs-on: ubuntu-latest
     permissions:
@@ -68,59 +61,83 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-          submodules: true
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
-          python-version: 3.12
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.12"
+          enable-cache: "false"
 
-      - name: Install and configure Poetry
-        uses: snok/install-poetry@a783c322200f0519c7926aa6faa857c4e23e9263 # v1.4.2
-        with:
-          version: ${{ env.POETRY_VERSION }}
-          installer-parallel: true
+      - name: Build the source distribution and wheel
+        run: uv build --sdist --wheel
 
-      - name: Configure poetry
-        shell: bash
-        run: poetry config virtualenvs.in-project true
+      - name: Check the package metadata
+        run: uv run --no-project --with twine twine check --strict dist/*
 
-      - name: Install dependencies
-        run: poetry install --no-interaction --no-root --without=dev
-
-      - name: Install project
-        run: poetry install --no-interaction --without=dev
-
-      - name: Build package
-        run: poetry build --format=sdist
-
-      - name: Upload the source distribution
+      - name: Upload the distributions
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: typeline-sdist
-          path: dist/*.tar.gz
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  verify-install:
+    name: verify-install
+    needs: build
+    runs-on: ubuntu-latest
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        PYTHON_VERSION: ["3.11", "3.12", "3.13", "3.14"]
+        DIST: [whl, tar.gz]
+    steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: "false"
+
+      - name: Import every module of the built distribution
+        env:
+          PYTHON_VERSION: ${{ matrix.PYTHON_VERSION }}
+          DIST: ${{ matrix.DIST }}
+        run: |
+          uv run --no-project --python "$PYTHON_VERSION" --with dist/*."$DIST" python -P - <<'PY'
+          import importlib, pkgutil
+          import typeline as package
+          for module in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
+              importlib.import_module(module.name)
+          print("imported every module of", package.__name__)
+          PY
 
   publish-to-pypi:
     name: publish-to-pypi
     runs-on: ubuntu-latest
-    needs: [build-wheels, build-sdist]
+    needs: [build, verify-install]
     environment: pypi
     permissions:
       id-token: write  # to publish to PyPI as a trusted publisher
     steps:
-      - name: Download the wheels and source distribution
+      - name: Download the distributions
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: packages
-          pattern: 'typeline-*'
-          merge-multiple: true
+          name: dist
+          path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          packages-dir: packages/
           skip-existing: true
+          print-hash: true
           verbose: true
 
   make-changelog:
@@ -154,11 +171,17 @@ jobs:
     environment: github
     permissions:
       contents: write  # to create the GitHub release
-    needs: make-changelog
+    needs: [build, make-changelog]
     steps:
+      - name: Download the distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: dist
+          path: dist/
+
       - name: Create the Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
           NOTES: ${{ needs.make-changelog.outputs.release_body }}
-        run: gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+        run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
