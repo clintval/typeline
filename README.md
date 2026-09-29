@@ -63,14 +63,9 @@ MyData(field1=20, field2='test2', field3=None)
 
 ```
 
-### Missing Values
-
-`None` is written as an empty field. When read, an empty field is `None` if the field allows `None`, and `""` if it is a `str`.
-Set `none_field`, e.g. to `"NA"`, when an optional text field must tell `""` and `None` apart.
-
 ### Any Text Stream
 
-Subscript the class instead of `from_path` to read or write any open text stream.
+To use an open text stream instead of a path, subscript the reader or writer class itself.
 
 ```pycon
 >>> import gzip
@@ -83,6 +78,12 @@ Subscript the class instead of `from_path` to read or write any open text stream
 [MyData(field1=10, field2='test1', field3=0.2)]
 
 ```
+
+### Missing Values
+
+`None` is written as an empty field.
+When read, an empty field is `None` if the field allows `None`, and `""` if it is a `str`.
+Set `none_field`, e.g. to `"NA"`, when an optional text field must tell `""` and `None` apart.
 
 ### Custom Field Formats
 
@@ -120,7 +121,44 @@ P-001	2026-09-29	Y	3;1;4
 
 ```
 
-Custom types nested anywhere inside a field, like a `list[Interval]`, are handled by `dec_hook` and `enc_hook`, with the same meaning as in msgspec.
+Custom types nested anywhere inside a field, like a `list[Interval]`, are handled by `enc_hook`, which turns such an object into builtin values, and `dec_hook`, which builds it back from them.
+Each hook raises `NotImplementedError` for types it does not handle.
+
+```pycon
+>>> class Interval:
+...     def __init__(self, start: int, end: int) -> None:
+...         self.start = start
+...         self.end = end
+...
+...     def __repr__(self) -> str:
+...         return f"Interval({self.start}, {self.end})"
+>>>
+>>> def enc_hook(obj: object) -> object:
+...     if isinstance(obj, Interval):
+...         return [obj.start, obj.end]
+...     raise NotImplementedError
+>>>
+>>> def dec_hook(kind: type, obj: object) -> object:
+...     if kind is Interval:
+...         return Interval(*obj)
+...     raise NotImplementedError
+>>>
+>>> @dataclass
+... class Target:
+...     gene: str
+...     intervals: list[Interval]
+>>>
+>>> with TsvWriter.from_path[Target](temp_file.name, enc_hook=enc_hook) as writer:
+...     writer.write(Target("BRCA1", [Interval(1, 9), Interval(20, 25)]))
+>>>
+>>> print(open(temp_file.name).read(), end="")
+BRCA1	[[1,9],[20,25]]
+>>>
+>>> with TsvReader.from_path[Target](temp_file.name, header=False, dec_hook=dec_hook) as reader:
+...     print(list(reader))
+[Target(gene='BRCA1', intervals=[Interval(1, 9), Interval(20, 25)])]
+
+```
 
 ### Your Own Format
 
