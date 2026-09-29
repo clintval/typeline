@@ -183,7 +183,6 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
             "Missing from header: ['field3']. Unexpected in header: ['field4'].",
             id="missing-and-unexpected",
         ),
-        pytest.param("field3\tfield2\tfield1", "The fields are out of order.", id="out-of-order"),
     ],
 )
 def test_reader_names_how_the_header_differs_from_the_dataclass(

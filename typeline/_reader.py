@@ -134,21 +134,34 @@ class DelimitedDataReader(
             quoting=csv.QUOTE_MINIMAL,
         )
 
-        # Protect the user from the case where a header was specified, but a data line was found!
+        # Match a header's columns to fields by name, so the columns may come in any order.
+        self._width: int = len(self._header)
+        self._positions: list[int] | None = None
+        self._extra_positions: list[int] = []
         found: list[str] | None = next(self._rows, None) if header else None
-        if found is not None and self._extra_field is not None:
-            found = found[: len(self._header)]
-        if found is not None and found != self._header:
+        if found is not None:
+            repeated: list[str] = sorted({name for name in found if found.count(name) > 1})
+            if repeated:
+                raise ValueError(
+                    f"Fields of header repeat a name! Header: {found}."
+                    + f" Repeated in header: {repeated}."
+                )
             missing: list[str] = [name for name in self._header if name not in found]
             unexpected: list[str] = [name for name in found if name not in self._header]
-            raise ValueError(
-                "Fields of header do not match fields of dataclass!"
-                + f" Header: {found}."
-                + f" Fields of {record_type.__name__}: {self._header}."
-                + (f" Missing from header: {missing}." if missing else "")
-                + (f" Unexpected in header: {unexpected}." if unexpected else "")
-                + ("" if missing or unexpected else " The fields are out of order.")
-            )
+            if missing or (unexpected and self._extra_field is None):
+                raise ValueError(
+                    "Fields of header do not match fields of dataclass!"
+                    + f" Header: {found}."
+                    + f" Fields of {record_type.__name__}: {self._header}."
+                    + (f" Missing from header: {missing}." if missing else "")
+                    + (f" Unexpected in header: {unexpected}." if unexpected else "")
+                )
+            self._width = len(found)
+            if found[: len(self._header)] != self._header:
+                self._positions = [found.index(name) for name in self._header]
+                self._extra_positions = [
+                    index for index in range(len(found)) if index not in self._positions
+                ]
 
     @override
     def __enter__(self) -> Self:
@@ -234,7 +247,10 @@ class DelimitedDataReader(
     @override
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
-        width = len(self._header)
+        width = self._width
+        named = len(self._header)
+        positions = self._positions
+        extra_positions = self._extra_positions
         field_readers = self._field_readers
         extra_field = self._extra_field
         for row in self._rows:
@@ -244,12 +260,16 @@ class DelimitedDataReader(
                     f"Expected {at_least}{width} fields but found {len(row)} on line"
                     + f" {self._line_count} for record type: {self._record_type.__name__}."
                 )
+            values = row if positions is None else [row[index] for index in positions]
             preprocessed = {
                 name: text if read is None else read(text)
-                for (name, read), text in zip(field_readers, row, strict=False)
+                for (name, read), text in zip(field_readers, values, strict=False)
             }
-            if extra_field is not None:
-                preprocessed[extra_field] = tuple(row[width:])
+            if extra_field is not None and positions is None:
+                preprocessed[extra_field] = tuple(row[named:])
+            elif extra_field is not None:
+                extra = [row[index] for index in extra_positions]
+                preprocessed[extra_field] = (*extra, *row[width:])
             try:
                 yield convert(
                     preprocessed,
