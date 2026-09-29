@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
+from typing import TextIO
 
 import pytest
 from typing_extensions import Unpack
@@ -185,7 +186,7 @@ def test_from_path_uses_the_defaults_of_a_subclass(tmp_path: Path) -> None:
         """A comma-delimited reader that does not expect a header by default."""
 
         @override
-        def __init__(self, handle: TextIOWrapper, /, **options: Unpack[ReaderOptions]) -> None:
+        def __init__(self, handle: TextIO, /, **options: Unpack[ReaderOptions]) -> None:
             _ = options.setdefault("header", False)
             super().__init__(handle, **options)
 

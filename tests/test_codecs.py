@@ -197,7 +197,7 @@ def test_writer_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> No
 
     path = tmp_path / "test.csv"
     codecs = {Color: COLOR, list[int]: delimited(int, sep="|", trailing_sep=True)}
-    with CsvWriter.from_path(path, MyData, codecs=codecs) as writer:
+    with CsvWriter.from_path[MyData](path, codecs=codecs) as writer:
         writer.write(MyData(Color(101, 2, 32), [1, 2, 3], ["a"]))
 
     assert path.read_text() == "'101,2,32',1|2|3|,[\"a\"]\n"
@@ -211,7 +211,7 @@ def test_writer_writes_none_as_the_none_field_before_a_codec(tmp_path: Path) -> 
         color: Color | None
 
     path = tmp_path / "test.csv"
-    with CsvWriter.from_path(path, MyData, codecs={Color: COLOR}, none_field=".") as writer:
+    with CsvWriter.from_path[MyData](path, codecs={Color: COLOR}, none_field=".") as writer:
         writer.write(MyData(None))
         writer.write(MyData(Color(1, 2, 3)))
 
@@ -226,7 +226,7 @@ def test_writer_passes_nested_custom_types_to_the_enc_hook(tmp_path: Path) -> No
         intervals: list[Interval]
 
     path = tmp_path / "test.csv"
-    with CsvWriter.from_path(path, MyData, enc_hook=enc_hook) as writer:
+    with CsvWriter.from_path[MyData](path, enc_hook=enc_hook) as writer:
         writer.write(MyData([Interval(1, 2), Interval(3, 4)]))
 
     assert path.read_text() == "'[[1,2],[3,4]]'\n"
@@ -244,7 +244,7 @@ def test_writer_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
 
     path = tmp_path / "test.csv"
     codecs = {Color: FieldCodec(from_text=Color.from_string, into_text=broken)}
-    with CsvWriter.from_path(path, MyData, codecs=codecs) as writer:
+    with CsvWriter.from_path[MyData](path, codecs=codecs) as writer:
         message = r"^Could not write field 'color' of type Color!"
         with pytest.raises(ValueError, match=message) as error:
             writer.write(MyData(Color(1, 2, 3)))
@@ -263,7 +263,7 @@ def test_codecs_round_trip_through_a_file(tmp_path: Path) -> None:
     codecs = {Color: COLOR, list[int]: delimited(int, trailing_sep=True)}
     records = [MyData(Color(1, 2, 3), [1, 2]), MyData(None, [])]
 
-    with CsvWriter.from_path(path, MyData, codecs=codecs) as writer:
+    with CsvWriter.from_path[MyData](path, codecs=codecs) as writer:
         writer.write_header()
         for record in records:
             writer.write(record)
@@ -282,7 +282,7 @@ class PostponedColor:
 def test_codecs_are_found_for_postponed_annotations(tmp_path: Path) -> None:
     """Test that codecs are found for fields whose annotations are strings."""
     path = tmp_path / "test.csv"
-    with CsvWriter.from_path(path, PostponedColor, codecs={Color: COLOR}) as writer:
+    with CsvWriter.from_path[PostponedColor](path, codecs={Color: COLOR}) as writer:
         writer.write(PostponedColor(Color(1, 2, 3)))
 
     assert path.read_text() == "'1,2,3'\n"

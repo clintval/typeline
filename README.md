@@ -43,7 +43,7 @@ pip install typeline
 >>> 
 >>> temp_file = NamedTemporaryFile(mode="w+t", suffix=".tsv")
 >>>
->>> with TsvWriter.from_path(temp_file.name, MyData) as writer:
+>>> with TsvWriter.from_path[MyData](temp_file.name) as writer:
 ...     writer.write_header()
 ...     writer.write(MyData(10, "test1", 0.2))
 ...     writer.write(MyData(20, "test2", None))
@@ -78,7 +78,7 @@ Custom types nested inside a field are handled by `dec_hook` and `enc_hook`, as 
 >>>
 >>> codecs = {list[int]: delimited(int, trailing_sep=True)}
 >>>
->>> with TsvWriter.from_path(temp_file.name, Feature, codecs=codecs) as writer:
+>>> with TsvWriter.from_path[Feature](temp_file.name, codecs=codecs) as writer:
 ...     writer.write(Feature("exon", [1, 2, 3]))
 >>>
 >>> with TsvReader.from_path[Feature](temp_file.name, header=False, codecs=codecs) as reader:

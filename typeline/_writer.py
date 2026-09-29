@@ -5,14 +5,14 @@ from contextlib import AbstractContextManager
 from csv import DictWriter
 from dataclasses import Field
 from dataclasses import fields as fields_of
-from dataclasses import is_dataclass
-from io import TextIOWrapper
 from os import linesep
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 from typing import Callable
 from typing import Generic
+from typing import TextIO
+from typing import cast
 
 from msgspec import to_builtins
 from msgspec.json import Encoder as JSONEncoder
@@ -21,6 +21,8 @@ from typing_extensions import TypedDict
 from typing_extensions import Unpack
 from typing_extensions import override
 
+from ._binding import DelimitedData
+from ._binding import SubscriptableClassmethod
 from ._data_types import RecordType
 from ._data_types import field_types
 from ._data_types import strip_optional
@@ -43,19 +45,16 @@ class WriterOptions(TypedDict, total=False, closed=True):
 
 
 class DelimitedDataWriter(
+    DelimitedData,
     AbstractContextManager["DelimitedDataWriter[RecordType]"],
     ABC,
     Generic[RecordType],
 ):
     """A writer for writing dataclasses into delimited data."""
 
-    delimiter: str
-    """The delimiter used to separate fields in the delimited data."""
-
     def __init__(
         self,
-        handle: TextIOWrapper,
-        record_type: type[RecordType],
+        handle: TextIO,
         /,
         *,
         none_field: str = "",
@@ -66,16 +65,14 @@ class DelimitedDataWriter(
 
         Args:
             handle: a file-like object to write delimited data to.
-            record_type: the type of the object we will be writing.
             none_field: the string that is used in place of None for a field.
             codecs: how to write a field into its text, by the field's type.
             enc_hook: encode custom types anywhere in a record, like msgspec's `enc_hook`.
         """
-        if not is_dataclass(record_type):
-            raise ValueError("record_type is not a dataclass but must be!")
+        record_type = cast(type[RecordType], self._bound_record_type())
 
         # Initialize and save internal attributes of this class.
-        self._handle: TextIOWrapper = handle
+        self._handle: TextIO = handle
         self._record_type: type[RecordType] = record_type
         self._none_field: str = none_field
         self._enc_hook: Callable[[Any], Any] | None = enc_hook
@@ -111,7 +108,7 @@ class DelimitedDataWriter(
         return self
 
     @override
-    def __exit__(
+    def __exit__(  # pyright: ignore[reportMissingSuperCall]
         self,
         __exc_type: type[BaseException] | None,
         __exc_value: BaseException | None,
@@ -149,7 +146,7 @@ class DelimitedDataWriter(
         """
         if not isinstance(record, self._record_type):
             raise ValueError(
-                f"Expected {self._record_type.__name__} but found {record.__class__.__qualname__}!"
+                f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
         self._writer.writerow({
             name: self._format(name, getattr(record, name)) for name in self._header
@@ -163,34 +160,24 @@ class DelimitedDataWriter(
         """Close all opened resources."""
         self._handle.close()
 
+    @SubscriptableClassmethod
     @classmethod
-    def from_path(
-        cls, path: Path | str, record_type: type[RecordType], /, **options: Unpack[WriterOptions]
-    ) -> Self:
+    def from_path(cls, path: Path | str, /, **options: Unpack[WriterOptions]) -> Self:
         """Construct a delimited data writer from a file path.
 
         Args:
             path: the path to the file to write delimited data to.
-            record_type: the type of the object we will be writing.
             options: the options of the writer, left at the writer's defaults when not given.
         """
         handle = Path(path).expanduser().open("w")
         try:
-            return cls(handle, record_type, **options)
+            return cls(handle, **options)
         except BaseException:
             handle.close()
             raise
 
-    @classmethod
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        if not hasattr(cls, "delimiter") or not isinstance(cls.delimiter, str):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise TypeError(
-                f"Subclass {cls.__name__} must define a string 'delimiter' class attribute"
-            )
 
-
-class CsvWriter(DelimitedDataWriter[RecordType]):
+class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
     r"""A writer for writing dataclasses into comma-delimited data.
 
     Example:
@@ -207,7 +194,7 @@ class CsvWriter(DelimitedDataWriter[RecordType]):
         >>> from typeline import CsvWriter
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with CsvWriter.from_path(tmpfile.name, MyData) as writer:
+        ...     with CsvWriter.from_path[MyData](tmpfile.name) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
         ...     Path(tmpfile.name).read_text()
@@ -216,10 +203,8 @@ class CsvWriter(DelimitedDataWriter[RecordType]):
         ```
     """
 
-    delimiter: str = ","
 
-
-class TsvWriter(DelimitedDataWriter[RecordType]):
+class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
     r"""A writer for writing dataclasses into tab-delimited data.
 
     Example:
@@ -236,7 +221,7 @@ class TsvWriter(DelimitedDataWriter[RecordType]):
         >>> from typeline import TsvWriter
         >>>
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with TsvWriter.from_path(tmpfile.name, MyData) as writer:
+        ...     with TsvWriter.from_path[MyData](tmpfile.name) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
         ...     Path(tmpfile.name).read_text()
@@ -244,5 +229,3 @@ class TsvWriter(DelimitedDataWriter[RecordType]):
 
         ```
     """
-
-    delimiter: str = "\t"

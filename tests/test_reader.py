@@ -17,7 +17,7 @@ from .conftest import SimpleMetric
 
 def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
     """Test that the CSV reader is set to use a comma."""
-    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -29,7 +29,7 @@ def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
     with CsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
-    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -44,7 +44,7 @@ def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
 
 def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
     """Test that the TSV reader is set to use a tab."""
-    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -56,7 +56,7 @@ def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
     with TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
-    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer.write(SimpleMetric(field1=1, field2="name", field3=0.2))
@@ -80,7 +80,7 @@ def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
 def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
     """Test that the reader will escape text when a delimiter is used in a field."""
     metric = SimpleMetric(field1=1, field2="my\tname", field3=0.2)
-    with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with TsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
     assert (tmp_path / "test.txt").read_text() == "1\t'my\tname'\t0.2\n"
@@ -108,7 +108,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
         field11=None,
         field12=0.2,
     )
-    with TsvWriter.from_path(tmp_path / "test.txt", ComplexMetric) as writer:
+    with TsvWriter.from_path[ComplexMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
 
@@ -135,7 +135,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
 
 def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
     """Test that the CSV reader is set to use a comma."""
-    with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
+    with CsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
         writer._handle.write("# this is a comment\n")

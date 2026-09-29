@@ -8,35 +8,26 @@ from contextlib import AbstractContextManager
 from csv import DictReader
 from dataclasses import Field
 from dataclasses import fields as fields_of
-from dataclasses import is_dataclass
-from functools import partial
-from functools import update_wrapper
-from io import TextIOWrapper
 from os import linesep
 from pathlib import Path
 from types import TracebackType
-from types import new_class
 from typing import Any
 from typing import Callable
-from typing import ClassVar
-from typing import Concatenate
 from typing import Generic
-from typing import ParamSpec
-from typing import TypeVar
+from typing import TextIO
 from typing import cast
-from typing import overload
 
 from msgspec import DecodeError
 from msgspec import ValidationError
 from msgspec import convert
 from msgspec.json import Decoder as JSONDecoder
-from typing_extensions import Never
-from typing_extensions import NoReturn
 from typing_extensions import Self
 from typing_extensions import TypedDict
 from typing_extensions import Unpack
 from typing_extensions import override
 
+from ._binding import DelimitedData
+from ._binding import SubscriptableClassmethod
 from ._data_types import RecordType
 from ._data_types import accepts_none
 from ._data_types import field_types
@@ -50,9 +41,6 @@ DEFAULT_COMMENT_PREFIXES: set[str] = set()
 
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 """JSON literal keywords that require parsing."""
-
-_PARAMETERIZED_READERS: dict[tuple[type[Any], type[Any]], type[Any]] = {}
-"""A cache of reader subclasses bound to a concrete record type."""
 
 
 class ReaderOptions(TypedDict, total=False, closed=True):
@@ -74,96 +62,8 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     """Decode custom types anywhere in a record, with the semantics of msgspec's `dec_hook`."""
 
 
-OwnerType = TypeVar("OwnerType", covariant=True)
-"""The type variable for the class a reader constructor is accessed on."""
-
-ConstructorParams = ParamSpec("ConstructorParams")
-"""The parameters of a reader constructor, after the record type is bound."""
-
-
-class _BoundSubscriptableClassmethod(Generic[OwnerType, ConstructorParams]):
-    """A subscriptable classmethod bound to its class, awaiting a record type."""
-
-    def __init__(self, owner: Any, func: Callable[..., Any], name: str) -> None:
-        self._owner: Any = owner
-        self._func: Callable[..., Any] = func
-        _ = update_wrapper(self, func)
-        self.__name__: str = name
-
-    @overload
-    def __getitem__(
-        self: "_BoundSubscriptableClassmethod[type[TsvReader[Any]], ConstructorParams]",
-        record_type: type[RecordType],
-    ) -> "Callable[ConstructorParams, TsvReader[RecordType]]": ...
-
-    @overload
-    def __getitem__(
-        self: "_BoundSubscriptableClassmethod[type[CsvReader[Any]], ConstructorParams]",
-        record_type: type[RecordType],
-    ) -> "Callable[ConstructorParams, CsvReader[RecordType]]": ...
-
-    @overload
-    def __getitem__(
-        self, record_type: type[RecordType]
-    ) -> "Callable[ConstructorParams, DelimitedDataReader[RecordType]]": ...
-
-    def __getitem__(self, record_type: object) -> Callable[..., Any]:
-        """Bind the record type, returning a constructor for a reader of that record type."""
-        self._refuse_bound_owner()
-        if not isinstance(record_type, type) or not is_dataclass(record_type):
-            raise TypeError(
-                f"{self._usage} must be subscripted with a dataclass, not {record_type}!"
-            )
-        return partial(self._func, self._owner[record_type])
-
-    def __call__(self, *_args: Never, **_kwargs: Never) -> NoReturn:
-        """Refuse to construct a reader without a record type."""
-        self._refuse_bound_owner()
-        raise TypeError(
-            f"{self._usage} must be subscripted with a dataclass, e.g. {self._usage}[MyData]!"
-        )
-
-    @property
-    def _usage(self) -> str:
-        """The unsubscripted reader and method name, e.g. `TsvReader.from_path`."""
-        unbound = next(c for c in self._owner.__mro__ if c._parameterized_record_type is None)
-        return f"{unbound.__name__}.{self.__name__}"
-
-    def _refuse_bound_owner(self) -> None:
-        """Refuse access through a reader class that already has a record type."""
-        if self._owner._parameterized_record_type is not None:
-            raise TypeError(
-                f"{self._owner.__name__} already has a record type!"
-                + f" Use {self._usage}[MyData] instead."
-            )
-
-
-class _SubscriptableClassmethod(Generic[ConstructorParams]):
-    """Turn a classmethod into a constructor that is subscripted with a record type before calling.
-
-    Example: `TsvReader.from_path[MyData](path)`.
-    """
-
-    def __init__(
-        self,
-        method: "classmethod[Any, ConstructorParams, Any]"
-        | Callable[Concatenate[Any, ConstructorParams], Any],
-    ) -> None:
-        self._func: Callable[..., Any] = (
-            method.__func__ if isinstance(method, classmethod) else method
-        )
-        self._name: str = ""
-
-    def __set_name__(self, owner: type[Any], name: str) -> None:
-        self._name = name
-
-    def __get__(
-        self, obj: object, owner: type[OwnerType]
-    ) -> _BoundSubscriptableClassmethod[type[OwnerType], ConstructorParams]:
-        return _BoundSubscriptableClassmethod(owner, self._func, self._name)
-
-
 class DelimitedDataReader(
+    DelimitedData,
     AbstractContextManager["DelimitedDataReader[RecordType]"],
     Iterable[RecordType],
     ABC,
@@ -171,15 +71,9 @@ class DelimitedDataReader(
 ):
     """A reader for reading delimited text data into dataclasses."""
 
-    delimiter: str
-    """The delimiter used to separate fields in the delimited data."""
-
-    _parameterized_record_type: ClassVar[type[Any] | None] = None
-    """The record type bound by subscripting the class, e.g. `CsvReader[MyData]`."""
-
     def __init__(
         self,
-        handle: TextIOWrapper,
+        handle: TextIO,
         /,
         *,
         header: bool = True,
@@ -198,13 +92,10 @@ class DelimitedDataReader(
             codecs: how to read a field from its text, by the field's type.
             dec_hook: decode custom types anywhere in a record, like msgspec's `dec_hook`.
         """
-        if self._parameterized_record_type is None:
-            name = type(self).__name__
-            raise TypeError(f"{name} must be subscripted with a dataclass, e.g. {name}[MyData]!")
-        record_type = cast(type[RecordType], self._parameterized_record_type)
+        record_type = cast(type[RecordType], self._bound_record_type())
 
         # Initialize and save internal attributes of this class.
-        self._handle: TextIOWrapper = handle
+        self._handle: TextIO = handle
         self._line_count: int = 0
         self._record_type: type[RecordType] = record_type
         self._comment_prefixes: Collection[str] = set(comment_prefixes)
@@ -257,41 +148,13 @@ class DelimitedDataReader(
             )
 
     @override
-    def __init_subclass__(cls, delimiter: str | None = None, **kwargs: object) -> None:
-        """Define a delimiter upon the subclass using metaclass programming."""
-        if delimiter is not None:
-            cls.delimiter = delimiter
-        super().__init_subclass__(**kwargs)
-
-    def __class_getitem__(cls, item: Any) -> Any:
-        """Parameterize the reader, binding a concrete record type so classmethods can see it."""
-        alias = super().__class_getitem__(item)  # type: ignore[misc]  # pyright: ignore[reportAttributeAccessIssue]
-        if not isinstance(item, type) or not is_dataclass(item):
-            return alias
-        key = (cls, item)
-        if key not in _PARAMETERIZED_READERS:
-            _ = _PARAMETERIZED_READERS.setdefault(
-                key,
-                new_class(
-                    f"{cls.__name__}[{item.__name__}]",
-                    (alias,),
-                    exec_body=lambda ns: ns.update({
-                        "__module__": cls.__module__,
-                        "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
-                        "_parameterized_record_type": item,
-                    }),
-                ),
-            )
-        return _PARAMETERIZED_READERS[key]
-
-    @override
     def __enter__(self) -> Self:
         """Enter this context."""
         _ = super().__enter__()
         return self
 
     @override
-    def __exit__(
+    def __exit__(  # pyright: ignore[reportMissingSuperCall]
         self,
         __exc_type: type[BaseException] | None,
         __exc_value: BaseException | None,
@@ -384,7 +247,7 @@ class DelimitedDataReader(
         self._handle.close()
         return None
 
-    @_SubscriptableClassmethod
+    @SubscriptableClassmethod
     @classmethod
     def from_path(cls, path: Path | str, /, **options: Unpack[ReaderOptions]) -> Self:
         """Construct a delimited data reader from a file path.
