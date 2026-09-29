@@ -133,6 +133,16 @@ class DelimitedDataWriter(
                     f"Could not write field '{field_name}' of type {field_type}!"
                 ) from exception
 
+        kind: type[Any] = type(value)
+        if kind is str:
+            return cast(str, value)
+        if kind is int:
+            return str(value)
+        if kind is bool:
+            return "true" if value else "false"
+        if kind is float:
+            return self._encoder.encode(value).decode("utf-8")
+
         builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
         if isinstance(builtin, str):
             return builtin
