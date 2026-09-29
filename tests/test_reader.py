@@ -11,6 +11,7 @@ from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import TsvReader
 from typeline import TsvWriter
+from typeline._data_types import RecordType
 
 from .conftest import ComplexMetric
 from .conftest import SimpleMetric
@@ -27,7 +28,7 @@ def test_csv_reader_is_set_to_use_comma(tmp_path: Path) -> None:
         "1,name,0.2\n",
     ])
 
-    with CsvReader[SimpleMetric].from_path(tmp_path / "test.txt") as reader:
+    with CsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
     with CsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
@@ -54,7 +55,7 @@ def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
         "1\tname\t0.2\n",
     ])
 
-    with TsvReader[SimpleMetric].from_path(tmp_path / "test.txt") as reader:
+    with TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
     with TsvWriter.from_path(tmp_path / "test.txt", SimpleMetric) as writer:
@@ -79,7 +80,7 @@ def test_reader_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
     (tmp_path / "test.txt").touch()
 
     with pytest.raises(TypeError, match=r"CsvReader must be subscripted with a dataclass"):
-        CsvReader[MyTest].from_path(tmp_path / "test.txt")  # type: ignore[type-var]  # ty: ignore[invalid-type-arguments]
+        CsvReader.from_path[MyTest](tmp_path / "test.txt")  # type: ignore[type-var]  # ty: ignore[invalid-argument-type]
 
 
 def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
@@ -87,7 +88,7 @@ def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
     (tmp_path / "test.txt").write_text("field10,field11,field13\n")
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
-        CsvReader[SimpleMetric].from_path(tmp_path / "test.txt")
+        CsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
 
 def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
@@ -98,7 +99,7 @@ def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
         writer.write(metric)
     assert (tmp_path / "test.txt").read_text() == "1\t'my\tname'\t0.2\n"
 
-    with TsvReader[SimpleMetric].from_path(tmp_path / "test.txt", header=False) as reader:
+    with TsvReader.from_path[SimpleMetric](tmp_path / "test.txt", header=False) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="my\tname", field3=0.2)]
 
 
@@ -142,7 +143,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
     )
     assert (tmp_path / "test.txt").read_text() == expected
 
-    with TsvReader[ComplexMetric].from_path(tmp_path / "test.txt", header=False) as reader:
+    with TsvReader.from_path[ComplexMetric](tmp_path / "test.txt", header=False) as reader:
         assert list(reader) == [metric]
 
 
@@ -167,7 +168,7 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
         "2,name2,0.3\n",
     ])
 
-    with CsvReader[SimpleMetric].from_path(tmp_path / "test.txt", comment_prefixes={"#"}) as reader:
+    with CsvReader.from_path[SimpleMetric](tmp_path / "test.txt", comment_prefixes={"#"}) as reader:
         assert list(reader) == [
             SimpleMetric(field1=1, field2="name", field3=0.2),
             SimpleMetric(field1=2, field2="name2", field3=0.3),
@@ -184,7 +185,7 @@ def test_reader_raises_exception_for_missing_fields(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
-        TsvReader[SimpleMetric].from_path(tmp_path / "test.txt")
+        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
 
 def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
@@ -197,7 +198,7 @@ def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
-        TsvReader[SimpleMetric].from_path(tmp_path / "test.txt")
+        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
 
 def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> None:
@@ -210,7 +211,7 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
     )
 
     with (
-        TsvReader[SimpleMetric].from_path(tmp_path / "test.txt") as reader,
+        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader,
         pytest.raises(
             ValidationError,
             match=(
@@ -227,7 +228,7 @@ def test_reader_can_read_empty_file_ok(tmp_path: Path) -> None:
     (tmp_path / "test.txt").touch()
 
     with (
-        TsvReader[SimpleMetric].from_path(tmp_path / "test.txt", header=False) as reader,
+        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt", header=False) as reader,
     ):
         assert list(reader) == []
 
@@ -249,7 +250,7 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
             return f"[{stripped.translate(str.maketrans('|', ','))}]"
         return item
 
-    with CsvReader[MyMetric].from_path(tmp_path / "test.txt", dec_hook=dec_hook) as reader:
+    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", dec_hook=dec_hook) as reader:
         assert list(reader) == [MyMetric(0.1, [1, 2, 3])]
 
 
@@ -263,7 +264,7 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("field1,field2\nmy-name,null\n")
 
-    with CsvReader[MyData].from_path(tmp_path / "test.txt") as reader:
+    with CsvReader.from_path[MyData](tmp_path / "test.txt") as reader:
         with pytest.raises(
             ValidationError,
             match=(
@@ -289,7 +290,7 @@ def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("0.1,1,hello,\n0.2,,,'[1,2,3]'\n")
 
-    with CsvReader[MyMetric].from_path(tmp_path / "test.txt", header=False) as reader:
+    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", header=False) as reader:
         record1, record2 = list(iter(reader))
 
     assert record1 == MyMetric(0.1, 1, "hello", None)
@@ -304,33 +305,72 @@ def test_reader_should_be_usable_right_after_file_handle_open(tmp_path: Path) ->
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=None)]
 
 
-def test_reader_binds_record_type_from_subscript(tmp_path: Path) -> None:
-    """Test that a subscripted reader passes its record type to classmethods and constructors."""
+def test_reader_from_path_binds_record_type_from_subscript(tmp_path: Path) -> None:
+    """Test that subscripting from_path binds the record type of the reader."""
     (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
     (tmp_path / "test.tsv").write_text("field1\tfield2\tfield3\n1\tname\t0.2\n")
     expected = [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
-    with CsvReader[SimpleMetric].from_path(tmp_path / "test.csv") as reader:
+    with CsvReader.from_path[SimpleMetric](tmp_path / "test.csv") as reader:
+        assert type(reader) is CsvReader[SimpleMetric]
         assert isinstance(reader, CsvReader)
         assert list(reader) == expected
 
-    with TsvReader[SimpleMetric].from_path(tmp_path / "test.tsv") as reader:
+    with TsvReader.from_path[SimpleMetric](tmp_path / "test.tsv") as reader:
+        assert type(reader) is TsvReader[SimpleMetric]
         assert list(reader) == expected
 
+
+def test_reader_constructor_binds_record_type_from_subscript(tmp_path: Path) -> None:
+    """Test that subscripting the reader class binds the record type of the reader."""
+    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
+
     with CsvReader[SimpleMetric](open(tmp_path / "test.csv")) as reader:
-        assert list(reader) == expected
+        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
     assert CsvReader[SimpleMetric] is CsvReader[SimpleMetric]
     assert TsvReader[SimpleMetric].delimiter == "\t"
 
 
+def test_reader_from_path_keeps_its_name_and_docs() -> None:
+    """Test that the subscriptable from_path still looks like the classmethod it wraps."""
+    assert CsvReader.from_path.__name__ == "from_path"
+    assert CsvReader.from_path.__doc__ is not None
+    assert CsvReader.from_path.__doc__.startswith(
+        "Construct a delimited data reader from a file path."
+    )
+
+
 def test_reader_requires_a_record_type(tmp_path: Path) -> None:
-    """Test that an unsubscripted reader raises an error."""
+    """Test that a reader without a record type raises an error."""
     (tmp_path / "test.txt").write_text("field1,field2,field3\n")
-    with pytest.raises(TypeError, match=r"CsvReader must be subscripted with a dataclass"):
-        CsvReader.from_path(tmp_path / "test.txt")
+    with pytest.raises(
+        TypeError, match=r"CsvReader.from_path must be subscripted with a dataclass"
+    ):
+        CsvReader.from_path(tmp_path / "test.txt")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match=r"TsvReader must be subscripted with a dataclass"):
         TsvReader(open(tmp_path / "test.txt"))
+
+
+def test_reader_rejects_from_path_on_a_subscripted_reader(tmp_path: Path) -> None:
+    """Test that from_path cannot be used through a reader class that already has a record type."""
+    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
+    with pytest.raises(TypeError, match=r"CsvReader\[SimpleMetric\] already has a record type"):
+        CsvReader[SimpleMetric].from_path(tmp_path / "test.csv")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match=r"CsvReader\[SimpleMetric\] already has a record type"):
+        CsvReader[SimpleMetric].from_path[SimpleMetric](tmp_path / "test.csv")
+
+
+def test_reader_generic_subclass_supports_subscripted_from_path(tmp_path: Path) -> None:
+    """Test that a generic subclass of a reader supports a subscripted from_path."""
+
+    class MyCsvReader(CsvReader[RecordType]):
+        """A custom comma-delimited reader."""
+
+    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
+    with MyCsvReader.from_path[SimpleMetric](tmp_path / "test.csv") as reader:
+        assert type(reader) is MyCsvReader[SimpleMetric]
+        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
 
 
 def test_reader_subclass_of_subscripted_reader_keeps_record_type(tmp_path: Path) -> None:
@@ -340,5 +380,5 @@ def test_reader_subclass_of_subscripted_reader_keeps_record_type(tmp_path: Path)
         """A reader dedicated to simple metrics."""
 
     (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
-    with SimpleMetricReader.from_path(tmp_path / "test.csv") as reader:
+    with SimpleMetricReader(open(tmp_path / "test.csv")) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]

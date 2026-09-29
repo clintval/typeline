@@ -8,6 +8,8 @@ from csv import DictReader
 from dataclasses import Field
 from dataclasses import fields as fields_of
 from dataclasses import is_dataclass
+from functools import partial
+from functools import update_wrapper
 from io import TextIOWrapper
 from os import linesep
 from pathlib import Path
@@ -16,13 +18,19 @@ from types import new_class
 from typing import Any
 from typing import Callable
 from typing import ClassVar
+from typing import Concatenate
 from typing import Generic
+from typing import ParamSpec
+from typing import TypeVar
 from typing import cast
+from typing import overload
 
 from msgspec import DecodeError
 from msgspec import ValidationError
 from msgspec import convert
 from msgspec.json import Decoder as JSONDecoder
+from typing_extensions import Never
+from typing_extensions import NoReturn
 from typing_extensions import Self
 from typing_extensions import override
 
@@ -36,6 +44,83 @@ JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 
 _PARAMETERIZED_READERS: dict[tuple[type[Any], type[Any]], type[Any]] = {}
 """A cache of reader subclasses bound to a concrete record type."""
+
+OwnerType = TypeVar("OwnerType", covariant=True)
+"""The type variable for the class a reader constructor is accessed on."""
+
+ConstructorParams = ParamSpec("ConstructorParams")
+"""The parameters of a reader constructor, after the record type is bound."""
+
+
+class _BoundSubscriptableClassmethod(Generic[OwnerType, ConstructorParams]):
+    """A subscriptable classmethod bound to its class, awaiting a record type."""
+
+    def __init__(self, owner: Any, func: Callable[..., Any], name: str) -> None:
+        self._owner: Any = owner
+        self._func: Callable[..., Any] = func
+        _ = update_wrapper(self, func)
+        self.__name__: str = name
+
+    @overload
+    def __getitem__(
+        self: "_BoundSubscriptableClassmethod[type[TsvReader[Any]], ConstructorParams]",
+        record_type: type[RecordType],
+    ) -> "Callable[ConstructorParams, TsvReader[RecordType]]": ...
+
+    @overload
+    def __getitem__(
+        self: "_BoundSubscriptableClassmethod[type[CsvReader[Any]], ConstructorParams]",
+        record_type: type[RecordType],
+    ) -> "Callable[ConstructorParams, CsvReader[RecordType]]": ...
+
+    @overload
+    def __getitem__(
+        self, record_type: type[RecordType]
+    ) -> "Callable[ConstructorParams, DelimitedDataReader[RecordType]]": ...
+
+    def __getitem__(self, record_type: type[Any]) -> Callable[..., Any]:
+        """Bind the record type, returning a constructor for a reader of that record type."""
+        self._refuse_bound_owner()
+        return partial(self._func, self._owner[record_type])
+
+    def __call__(self, *_args: Never, **_kwargs: Never) -> NoReturn:
+        """Refuse to construct a reader without a record type."""
+        self._refuse_bound_owner()
+        name = f"{self._owner.__name__}.{self.__name__}"
+        raise TypeError(f"{name} must be subscripted with a dataclass, e.g. {name}[MyData]!")
+
+    def _refuse_bound_owner(self) -> None:
+        """Refuse access through a reader class that already has a record type."""
+        if self._owner._parameterized_record_type is not None:
+            raise TypeError(
+                f"{self._owner.__name__} already has a record type! Subscript {self.__name__}"
+                + f" on an unsubscripted reader instead, e.g. TsvReader.{self.__name__}[MyData]."
+            )
+
+
+class _SubscriptableClassmethod(Generic[ConstructorParams]):
+    """Turn a classmethod into a constructor that is subscripted with a record type before calling.
+
+    Example: `TsvReader.from_path[MyData](path)`.
+    """
+
+    def __init__(
+        self,
+        method: "classmethod[Any, ConstructorParams, Any]"
+        | Callable[Concatenate[Any, ConstructorParams], Any],
+    ) -> None:
+        self._func: Callable[..., Any] = (
+            method.__func__ if isinstance(method, classmethod) else method
+        )
+        self._name: str = ""
+
+    def __set_name__(self, owner: type[Any], name: str) -> None:
+        self._name = name
+
+    def __get__(
+        self, obj: object, owner: type[OwnerType]
+    ) -> _BoundSubscriptableClassmethod[type[OwnerType], ConstructorParams]:
+        return _BoundSubscriptableClassmethod(owner, self._func, self._name)
 
 
 class DelimitedDataReader(
@@ -136,7 +221,7 @@ class DelimitedDataReader(
 
         This allows building up multiple transformations::
 
-            reader = (CsvReader[MyData].from_path("data.csv")
+            reader = (CsvReader.from_path[MyData]("data.csv")
                 .with_decoder(custom_decoder_1)
                 .with_decoder(custom_decoder_2))
 
@@ -269,6 +354,7 @@ class DelimitedDataReader(
         self._handle.close()
         return None
 
+    @_SubscriptableClassmethod
     @classmethod
     def from_path(
         cls,
@@ -318,7 +404,7 @@ class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with CsvReader[MyData].from_path(tmpfile.name) as reader:
+        ...     with CsvReader.from_path[MyData](tmpfile.name) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
@@ -346,7 +432,7 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with TsvReader[MyData].from_path(tmpfile.name) as reader:
+        ...     with TsvReader.from_path[MyData](tmpfile.name) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
