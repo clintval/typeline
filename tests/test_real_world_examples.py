@@ -393,8 +393,10 @@ def test_error_messages_explain_what_went_wrong(tmp_path: Path) -> None:
 
     _ = (tmp_path / "visits.tsv").write_text("P-001\tSeptember 29\t120.50\tY\t3;\n")
     message = r"^Could not read field 'seen' of type date from text 'September 29' on line 1!$"
-    with TsvReader.from_path[Visit](
-        tmp_path / "visits.tsv", header=False, codecs=VISIT_CODECS
-    ) as reader:
-        with pytest.raises(ValueError, match=message):
-            _ = list(reader)
+    with (
+        TsvReader.from_path[Visit](
+            tmp_path / "visits.tsv", header=False, codecs=VISIT_CODECS
+        ) as reader,
+        pytest.raises(ValueError, match=message),
+    ):
+        _ = list(reader)

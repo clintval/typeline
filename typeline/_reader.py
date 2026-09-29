@@ -26,6 +26,7 @@ from typing_extensions import override
 
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
+from ._comment import Comment
 from ._data_types import RecordType
 from ._data_types import accepts_none
 from ._data_types import field_types
@@ -61,6 +62,9 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     dec_hook: Callable[[type, Any], Any] | None
     """Decode custom types anywhere in a record, with the semantics of msgspec's `dec_hook`."""
 
+    on_comment: Callable[[Comment], None] | None
+    """Receive each comment line as it is skipped; comments are dropped if None."""
+
 
 class DelimitedDataReader(
     DelimitedData,
@@ -80,6 +84,7 @@ class DelimitedDataReader(
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
         dec_hook: Callable[[type, Any], Any] | None = None,
+        on_comment: Callable[[Comment], None] | None = None,
     ):
         """Instantiate a new delimited data reader.
 
@@ -90,6 +95,7 @@ class DelimitedDataReader(
             none_field: the string that is used in place of None for a field.
             codecs: how to read a field from its text, by the field's type.
             dec_hook: decode custom types anywhere in a record, like msgspec's `dec_hook`.
+            on_comment: receive each comment line as it is skipped; comments are dropped if None.
         """
         record_type = cast(type[RecordType], self._bound_record_type())
 
@@ -100,6 +106,7 @@ class DelimitedDataReader(
         self._comment_prefixes: Collection[str] = set(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
+        self._on_comment: Callable[[Comment], None] | None = on_comment
 
         # Build a JSON decoder for parsing string values into Python objects
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
@@ -168,6 +175,8 @@ class DelimitedDataReader(
             if not line or not (stripped := line.strip()):
                 continue
             elif any(stripped.startswith(prefix) for prefix in self._comment_prefixes):
+                if self._on_comment is not None:
+                    self._on_comment(Comment(self._line_count, line.rstrip("\r\n")))
                 continue
             yield line
 

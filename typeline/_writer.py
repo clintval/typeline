@@ -1,5 +1,6 @@
 import csv
 from collections.abc import Mapping
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
@@ -23,6 +24,7 @@ from typing_extensions import override
 
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
+from ._comment import Comment
 from ._data_types import RecordType
 from ._data_types import field_types
 from ._data_types import find_codec
@@ -30,6 +32,9 @@ from ._data_types import type_name
 from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
+
+DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
+"""The default prefixes of comment lines a writer writes."""
 
 
 class WriterOptions(TypedDict, total=False, closed=True):
@@ -43,6 +48,9 @@ class WriterOptions(TypedDict, total=False, closed=True):
 
     enc_hook: Callable[[Any], Any] | None
     """Encode custom types anywhere in a record, with the semantics of msgspec's `enc_hook`."""
+
+    comment_prefixes: Sequence[str]
+    """The prefixes a comment line may start with; the first is added to lines without one."""
 
 
 class DelimitedDataWriter(
@@ -60,6 +68,7 @@ class DelimitedDataWriter(
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
+        comment_prefixes: Sequence[str] = DEFAULT_COMMENT_PREFIXES,
     ) -> None:
         """Instantiate a new delimited record writer.
 
@@ -68,6 +77,8 @@ class DelimitedDataWriter(
             none_field: the string that is used in place of None for a field.
             codecs: how to write a field into its text, by the field's type.
             enc_hook: encode custom types anywhere in a record, like msgspec's `enc_hook`.
+            comment_prefixes: the prefixes a comment line may start with; the first is added to
+                comment lines written without one.
         """
         record_type = cast(type[RecordType], self._bound_record_type())
 
@@ -76,6 +87,9 @@ class DelimitedDataWriter(
         self._record_type: type[RecordType] = record_type
         self._none_field: str = none_field
         self._enc_hook: Callable[[Any], Any] | None = enc_hook
+        if not comment_prefixes:
+            raise ValueError("comment_prefixes must hold at least one prefix!")
+        self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
 
         # Inspect the record type and save the fields and field names.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
@@ -163,6 +177,20 @@ class DelimitedDataWriter(
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
         self._writer.writerow(self._header)
+
+    def write_comment(self, comment: str | Comment) -> None:
+        """Write a comment, e.g. one a reader sent to `on_comment`.
+
+        A `Comment` is written as it was read. Each line of a string is written as-is when it
+        starts with one of the writer's comment prefixes, or else after the first prefix.
+        """
+        if isinstance(comment, Comment):
+            _ = self._handle.write(f"{comment.text}{linesep}")
+            return
+        prefix = self._comment_prefixes[0]
+        for line in comment.splitlines():
+            text = line if line.startswith(self._comment_prefixes) else f"{prefix} {line}".rstrip()
+            _ = self._handle.write(f"{text}{linesep}")
 
     def close(self) -> None:
         """Close all opened resources."""

@@ -238,12 +238,14 @@ def test_reader_raises_exception_for_a_record_with_the_wrong_number_of_fields(
     """Test the reader names the line and field counts when a record is too short or too long."""
     (tmp_path / "test.txt").write_text("\n".join(["field1\tfield2\tfield3", "1\tname\t0.2", line]))
 
-    with TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader:
-        with pytest.raises(
+    with (
+        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader,
+        pytest.raises(
             ValueError,
             match=f"Expected 3 fields but found {found} on line 3 for record type: SimpleMetric.",
-        ):
-            _ = list(reader)
+        ),
+    ):
+        _ = list(reader)
 
 
 def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> None:
@@ -303,8 +305,9 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("field1,field2\nmy-name,null\n")
 
-    with CsvReader.from_path[MyData](tmp_path / "test.txt") as reader:
-        with pytest.raises(
+    with (
+        CsvReader.from_path[MyData](tmp_path / "test.txt") as reader,
+        pytest.raises(
             ValidationError,
             match=(
                 r"Could not parse JSON\-like object into requested structure\:"
@@ -313,8 +316,9 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
                 + r".*Requested structure\: MyData\."
                 + r".*Expected \`array\`\, got \`null\`"
             ),
-        ):
-            list(reader)
+        ),
+    ):
+        list(reader)
 
 
 def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:

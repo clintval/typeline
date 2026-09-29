@@ -85,6 +85,29 @@ To use an open text stream instead of a path, subscript the reader or writer cla
 When read, an empty field is `None` if the field allows `None`, and `""` if it is a `str`.
 Set `none_field`, e.g. to `"NA"`, when an optional text field must tell `""` and `None` apart.
 
+### Comments
+
+A reader skips lines that start with any of its `comment_prefixes`, and hands each one to `on_comment` as a `Comment` with its line number.
+A writer writes comments with `write_comment`, so comments can be passed straight from a reader to a writer and keep their places.
+
+```pycon
+>>> _ = open(temp_file.name, "w").write("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
+>>>
+>>> with (
+...     TsvWriter.from_path[MyData](f"{temp_file.name}.copy") as writer,
+...     TsvReader.from_path[MyData](temp_file.name, comment_prefixes={"#"}, on_comment=writer.write_comment) as reader,
+... ):
+...     writer.write_header()
+...     for record in reader:
+...         writer.write(record)
+>>>
+>>> print(open(f"{temp_file.name}.copy").read(), end="")
+# made by a tool
+field1	field2	field3
+10	test1	0.2
+
+```
+
 ### Custom Field Formats
 
 Lists, dicts, sets, enums, and nested dataclasses are written as JSON by default.
