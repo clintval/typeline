@@ -12,7 +12,6 @@ from types import TracebackType
 from typing import Any
 from typing import Callable
 from typing import Generic
-from typing import cast
 
 from msgspec import to_builtins
 from msgspec.json import Encoder as JSONEncoder
@@ -37,16 +36,16 @@ class DelimitedDataWriter(
         handle: TextIOWrapper,
         record_type: type[RecordType],
         /,
-        none_field: str = "",
+        none_field: str = "null",
         enc_hook: Callable[[Any], Any] | None = None,
     ) -> None:
         """Instantiate a new delimited record writer.
 
         Args:
-            handle: a file-like object to read delimited data from.
+            handle: a file-like object to write delimited data to.
             record_type: the type of the object we will be writing.
             none_field: the string that is used in place of None for a field.
-            enc_hook: a custom encoder hook for the JSON decoder.
+            enc_hook: a custom encoder hook for converting values to builtin types.
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
@@ -115,13 +114,6 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _preprocess(self, value: Any) -> Any:
-        """A custom preprocessing step that will pre-process a value prior to serialization."""
-        if isinstance(value, str):
-            return value
-        else:
-            return self._encoder.encode(value).decode("utf-8")
-
     def _encode(self, item: Any) -> Any:
         """Encode a value before writing to the delimited file.
 
@@ -150,37 +142,26 @@ class DelimitedDataWriter(
             return self._enc_hook(item)
         return item
 
-    def _postprocess(self, value: Any) -> Any:
-        """A custom postprocessing step that will post-process a value after serialization."""
-        if isinstance(value, str):
-            return value.lstrip('"').rstrip('"')
-        if value is None:
+    def _format(self, value: Any) -> str:
+        """Format a field value as the text of one delimited field."""
+        builtin = to_builtins(self._encode(value), str_keys=True, enc_hook=self._enc_hook)
+        if builtin is None:
             return self._none_field
-        return value
+        if isinstance(builtin, str):
+            return builtin
+        return self._encoder.encode(builtin).decode("utf-8")
 
     def write(self, record: RecordType) -> None:
-        """Write the record to the open file-like object using two-phase encoding.
+        """Write the record to the open file-like object.
 
-        Phase 1: Get values from the dataclass and apply preprocessing (JSON encoding).
-        Phase 2: Convert to builtins via msgspec with custom _encode hook.
-        Phase 3: Post-process for CSV format (remove quotes, handle None).
-
-        This allows subclasses to override _encode() for custom type handling.
+        Each field value is passed through `_encode()`, converted to builtin types, and then written
+        as-is when a string, as the `none_field` when None, or as JSON otherwise.
         """
         if not isinstance(record, self._record_type):
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {record.__class__.__qualname__}!"
             )
-
-        # Get raw values and preprocess them (converts to JSON strings)
-        encoded = {name: self._preprocess(getattr(record, name)) for name in self._header}
-
-        # Convert to builtins with custom encoding hook (_encode can be overridden)
-        builtin = cast(dict[str, Any], to_builtins(encoded, str_keys=True, enc_hook=self._encode))
-
-        # Post-process for CSV format
-        as_dict = {name: self._postprocess(value) for name, value in builtin.items()}
-        self._writer.writerow(as_dict)
+        self._writer.writerow({name: self._format(getattr(record, name)) for name in self._header})
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
@@ -195,7 +176,7 @@ class DelimitedDataWriter(
         cls: type["DelimitedDataWriter[RecordType]"],
         path: Path | str,
         record_type: type[RecordType],
-        none_field: str = "",
+        none_field: str = "null",
         enc_hook: Callable[[Any], Any] | None = None,
     ) -> "DelimitedDataWriter[RecordType]":
         """Construct a delimited data writer from a file path.
@@ -249,7 +230,6 @@ class CsvWriter(DelimitedDataWriter[RecordType]):
 
 
 class TsvWriter(DelimitedDataWriter[RecordType]):
-    pass
     r"""A writer for writing dataclasses into tab-delimited data.
 
     Example:
@@ -274,4 +254,5 @@ class TsvWriter(DelimitedDataWriter[RecordType]):
 
         ```
     """
+
     delimiter: str = "\t"

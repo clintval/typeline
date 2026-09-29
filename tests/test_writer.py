@@ -5,6 +5,7 @@ from typing import Optional
 
 import pytest
 
+from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import TsvWriter
 
@@ -133,7 +134,6 @@ def test_writer_can_write_with_a_custom_callback(tmp_path: Path) -> None:
     def enc_hook(value: Any) -> Any:
         """A custom encoding hook for the writer."""
         if isinstance(value, MyCustomType):
-            print(value)
             return repr(value)
         return value
 
@@ -157,3 +157,37 @@ def test_writer_can_write_old_style_optional_types(tmp_path: Path) -> None:
         writer.write(MyMetric(0.2, None, [1, 2, 3]))
 
     assert (tmp_path / "test.txt").read_text() == "0.1,1,null\n0.2,null,'[1,2,3]'\n"
+
+
+def test_writer_keeps_quotes_that_are_part_of_a_string(tmp_path: Path) -> None:
+    """Test that the writer does not strip quote characters that belong to a string value."""
+
+    @dataclass
+    class MyMetric:
+        field1: str
+        field2: list[str]
+
+    with CsvWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
+        writer.write(MyMetric('"quoted"', ['a"b']))
+
+    assert (tmp_path / "test.txt").read_text() == '"quoted",["a\\"b"]\n'
+
+    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", header=False) as reader:
+        assert list(reader) == [MyMetric('"quoted"', ['a"b'])]
+
+
+@pytest.mark.parametrize("none_field,expected", [("null", "null"), ("", ""), ("NA", "NA")])
+def test_writer_writes_none_as_the_none_field(
+    tmp_path: Path, none_field: str, expected: str
+) -> None:
+    """Test that the writer writes None as the none field."""
+
+    @dataclass
+    class MyMetric:
+        field1: int | None
+        field2: int | None
+
+    with CsvWriter.from_path(tmp_path / "test.txt", MyMetric, none_field=none_field) as writer:
+        writer.write(MyMetric(None, 1))
+
+    assert (tmp_path / "test.txt").read_text() == f"{expected},1\n"
