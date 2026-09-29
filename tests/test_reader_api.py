@@ -179,8 +179,8 @@ def test_from_path_closes_the_file_when_the_reader_cannot_be_built(
     with pytest.raises(ValueError, match=r"^Fields of header do not match fields of dataclass!"):
         _ = CsvReader.from_path[OtherData](csv_path)
 
-    assert len(opened) == 1
-    assert opened[0].closed
+    assert opened
+    assert all(handle.closed for handle in opened)
 
 
 def test_from_path_uses_the_defaults_of_a_subclass(tmp_path: Path) -> None:

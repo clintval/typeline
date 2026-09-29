@@ -79,6 +79,21 @@ To use an open text stream instead of a path, subscript the reader or writer cla
 
 ```
 
+### Compressed Files
+
+`from_path` reads gzip, bzip2, and xz files, which it recognizes by their contents.
+It writes them when the path ends in `.gz`, `.bz2`, or `.xz`.
+
+```pycon
+>>> with TsvWriter.from_path[MyData](f"{temp_file.name}.gz") as writer:
+...     writer.write(MyData(10, "test1", 0.2))
+>>>
+>>> with TsvReader.from_path[MyData](f"{temp_file.name}.gz", header=False) as reader:
+...     print(list(reader))
+[MyData(field1=10, field2='test1', field3=0.2)]
+
+```
+
 ### Missing Values
 
 `None` is written as an empty field.
