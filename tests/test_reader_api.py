@@ -9,6 +9,7 @@ from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 from typing import TextIO
+from typing import cast
 
 import pytest
 from typing_extensions import Unpack
@@ -153,7 +154,8 @@ def test_constructor_without_a_subscript(csv_path: Path) -> None:
         csv_path.open() as handle,
         pytest.raises(TypeError, match=r"^CsvReader must be subscripted"),
     ):
-        _ = CsvReader(handle)
+        unbound: type[CsvReader[Any]] = CsvReader
+        _ = unbound(handle)
 
 
 def test_from_path_closes_the_file_when_the_reader_cannot_be_built(
@@ -164,7 +166,7 @@ def test_from_path_closes_the_file_when_the_reader_cannot_be_built(
     original_open = Path.open
 
     def recording_open(self: Path, *args: Any, **kwargs: Any) -> Any:
-        handle = original_open(self, *args, **kwargs)
+        handle = cast(TextIOWrapper, original_open(self, *args, **kwargs))
         opened.append(handle)
         return handle
 

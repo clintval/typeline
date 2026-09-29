@@ -7,6 +7,7 @@ configured to fail on unused ignore comments, so these comments assert the error
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from typing import Any
 from typing import TextIO
 
 import pytest
@@ -126,7 +127,8 @@ def test_constructor_with_the_record_type_as_an_argument() -> None:
 def test_constructor_without_a_subscript() -> None:
     """Test that constructing a writer without a record type is refused."""
     with pytest.raises(TypeError, match=r"^TsvWriter must be subscripted with a dataclass"):
-        _ = TsvWriter(StringIO())
+        unbound: type[TsvWriter[Any]] = TsvWriter
+        _ = unbound(StringIO())
 
 
 def test_from_path_on_a_subscripted_writer(tmp_path: Path) -> None:

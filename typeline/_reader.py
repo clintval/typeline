@@ -1,5 +1,4 @@
 import csv
-from abc import ABC
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
@@ -67,7 +66,6 @@ class DelimitedDataReader(
     DelimitedData,
     AbstractContextManager["DelimitedDataReader[RecordType]"],
     Iterable[RecordType],
-    ABC,
     Generic[RecordType],
 ):
     """A reader for reading delimited text data into dataclasses."""

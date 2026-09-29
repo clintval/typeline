@@ -1,5 +1,4 @@
 import csv
-from abc import ABC
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import Field
@@ -49,7 +48,6 @@ class WriterOptions(TypedDict, total=False, closed=True):
 class DelimitedDataWriter(
     DelimitedData,
     AbstractContextManager["DelimitedDataWriter[RecordType]"],
-    ABC,
     Generic[RecordType],
 ):
     """A writer for writing dataclasses into delimited data."""
@@ -117,7 +115,7 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _format(self, field_name: str, value: Any, codec: FieldCodec[Any] | None) -> str:
+    def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
         """Write the value of one field into its text."""
         if value is None:
             if codec is not None and codec.missing is not None:
@@ -133,9 +131,9 @@ class DelimitedDataWriter(
                     f"Could not write field '{field_name}' of type {field_type}!"
                 ) from exception
 
-        kind: type[Any] = type(value)
-        if kind is str:
-            return cast(str, value)
+        kind = type(value)
+        if kind is str and isinstance(value, str):
+            return value
         if kind is int:
             return str(value)
         if kind is bool:

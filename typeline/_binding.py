@@ -10,6 +10,7 @@ from typing import Concatenate
 from typing import Generic
 from typing import ParamSpec
 from typing import TypeVar
+from typing import cast
 from typing import overload
 
 from typing_extensions import Never
@@ -71,10 +72,11 @@ class DelimitedData:
         if cls._parameterized_record_type is not None:
             raise TypeError(f"{cls.__name__} already has a record type!")
         if isinstance(item, tuple):
-            if len(item) != 1:
-                raise TypeError(f"{cls.__name__} takes one record type, but got {len(item)}!")
-            item = item[0]
-        alias = super().__class_getitem__(item)  # type: ignore[misc]  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
+            items: tuple[Any, ...] = item  # pyright: ignore[reportUnknownVariableType]
+            if len(items) != 1:
+                raise TypeError(f"{cls.__name__} takes one record type, but got {len(items)}!")
+            item = items[0]
+        alias: Any = cast(Any, super()).__class_getitem__(item)
         if not isinstance(item, type) or not is_dataclass(item):
             return alias
         key = (cls, item)
