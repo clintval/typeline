@@ -125,6 +125,15 @@ class DelimitedDataReader(
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
         for record in self._reader:
+            if None in record or None in record.values():
+                row: dict[Any, Any] = record  # DictReader keys overflow under None
+                extra: list[str] = row.get(None, [])
+                present: int = sum(v is not None for k, v in row.items() if k is not None)
+                found: int = present + len(extra)
+                raise ValueError(
+                    f"Expected {len(self._header)} fields but found {found} on line"
+                    + f" {self._line_count} for record type: {self._record_type.__name__}."
+                )
             as_builtins = self._csv_dict_to_json(record)
             try:
                 yield convert(as_builtins, self._record_type, strict=False, str_keys=True)

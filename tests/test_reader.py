@@ -203,6 +203,27 @@ def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
         TsvReader.from_path(tmp_path / "test.txt", SimpleMetric)
 
 
+@pytest.mark.parametrize(
+    "line,found",
+    [
+        pytest.param("1\tname", 2, id="too-few-fields"),
+        pytest.param("1\tname\t0.2\thi-five", 4, id="too-many-fields"),
+    ],
+)
+def test_reader_raises_exception_for_a_record_with_the_wrong_number_of_fields(
+    tmp_path: Path, line: str, found: int
+) -> None:
+    """Test the reader names the line and field counts when a record is too short or too long."""
+    (tmp_path / "test.txt").write_text("\n".join(["field1\tfield2\tfield3", "1\tname\t0.2", line]))
+
+    with TsvReader.from_path(tmp_path / "test.txt", SimpleMetric) as reader:
+        with pytest.raises(
+            ValueError,
+            match=f"Expected 3 fields but found {found} on line 3 for record type: SimpleMetric.",
+        ):
+            _ = list(reader)
+
+
 def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> None:
     """Test the reader raises an exception for failed type coercion."""
     (tmp_path / "test.txt").write_text(
