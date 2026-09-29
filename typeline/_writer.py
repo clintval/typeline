@@ -1,6 +1,5 @@
 import csv
 from abc import ABC
-from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from csv import DictWriter
 from dataclasses import Field
@@ -28,6 +27,7 @@ from ._data_types import field_types
 from ._data_types import strip_optional
 from ._data_types import type_name
 from .codecs import NO_CODECS
+from .codecs import Codecs
 from .codecs import FieldCodec
 
 
@@ -37,7 +37,7 @@ class WriterOptions(TypedDict, total=False, closed=True):
     none_field: str
     """The string that is used in place of None for a field."""
 
-    codecs: Mapping[Any, FieldCodec[Any]]
+    codecs: Codecs
     """How to write a field into its text, by the field's type."""
 
     enc_hook: Callable[[Any], Any] | None
@@ -58,7 +58,7 @@ class DelimitedDataWriter(
         /,
         *,
         none_field: str = "",
-        codecs: Mapping[Any, FieldCodec[Any]] = NO_CODECS,
+        codecs: Codecs = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
     ) -> None:
         """Instantiate a new delimited record writer.

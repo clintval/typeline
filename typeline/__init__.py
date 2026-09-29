@@ -7,9 +7,11 @@ from ._writer import CsvWriter
 from ._writer import DelimitedDataWriter
 from ._writer import TsvWriter
 from ._writer import WriterOptions
+from .codecs import Codecs
 from .codecs import FieldCodec
 
 __all__ = [
+    "Codecs",
     "CsvReader",
     "CsvWriter",
     "DelimitedDataReader",

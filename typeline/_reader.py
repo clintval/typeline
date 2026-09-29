@@ -3,7 +3,6 @@ from abc import ABC
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
-from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from csv import DictReader
 from dataclasses import Field
@@ -34,6 +33,7 @@ from ._data_types import field_types
 from ._data_types import strip_optional
 from ._data_types import type_name
 from .codecs import NO_CODECS
+from .codecs import Codecs
 from .codecs import FieldCodec
 
 DEFAULT_COMMENT_PREFIXES: set[str] = set()
@@ -55,7 +55,7 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     none_field: str
     """The string that is used in place of None for a field."""
 
-    codecs: Mapping[Any, FieldCodec[Any]]
+    codecs: Codecs
     """How to read a field from its text, by the field's type."""
 
     dec_hook: Callable[[type, Any], Any] | None
@@ -79,7 +79,7 @@ class DelimitedDataReader(
         header: bool = True,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
         none_field: str = "",
-        codecs: Mapping[Any, FieldCodec[Any]] = NO_CODECS,
+        codecs: Codecs = NO_CODECS,
         dec_hook: Callable[[type, Any], Any] | None = None,
     ):
         """Instantiate a new delimited data reader.

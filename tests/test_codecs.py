@@ -5,11 +5,15 @@ from typing import Optional
 
 import pytest
 
+from typeline import Codecs
 from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import FieldCodec
 from typeline import TsvReader
+from typeline.codecs import boolean
 from typeline.codecs import delimited
+from typeline.codecs import key_value
+from typeline.codecs import nullable
 
 
 @dataclass(frozen=True)
@@ -93,6 +97,61 @@ def test_delimited_codec_reads_an_optional_trailing_separator(trailing_sep: bool
     codec = delimited(int, trailing_sep=trailing_sep)
     assert codec.from_text("1,2,") == [1, 2]
     assert codec.from_text("1,2") == [1, 2]
+
+
+@pytest.mark.parametrize(
+    "codec,text,value",
+    [
+        pytest.param(key_value(), "ID=g1;Name=TP53", {"ID": "g1", "Name": "TP53"}, id="gff3"),
+        pytest.param(key_value(), "", {}, id="empty"),
+        pytest.param(
+            key_value(value=float), "DP=10.0;AF=0.5", {"DP": 10.0, "AF": 0.5}, id="values"
+        ),
+        pytest.param(key_value(sep=",", assign=":"), "a:1,b:2", {"a": "1", "b": "2"}, id="custom"),
+        pytest.param(boolean(), "Y", True, id="yes"),
+        pytest.param(boolean(), "N", False, id="no"),
+        pytest.param(boolean(true="1", false="0"), "1", True, id="one"),
+        pytest.param(nullable(COLOR, missing="0"), "0", None, id="missing"),
+        pytest.param(nullable(COLOR, missing="0"), "1,2,3", Color(1, 2, 3), id="present"),
+    ],
+)
+def test_helper_codecs_round_trip(codec: FieldCodec[Any], text: str, value: Any) -> None:
+    """Test that the helper codecs read text into a value and write it back."""
+    assert codec.from_text(text) == value
+    assert codec.into_text(value) == text
+
+
+def test_key_value_codec_reads_a_trailing_separator() -> None:
+    """Test that a key-value codec reads text that ends with a separator, as GFF3 allows."""
+    assert key_value().from_text("ID=g1;Name=TP53;") == {"ID": "g1", "Name": "TP53"}
+
+
+def test_key_value_codec_refuses_an_item_without_a_value() -> None:
+    """Test that a key-value codec refuses an item with no assignment."""
+    with pytest.raises(ValueError, match=r"^Expected key=value but found 'lonely'!"):
+        _ = key_value().from_text("ID=g1;lonely")
+
+
+def test_boolean_codec_refuses_other_text() -> None:
+    """Test that a boolean codec refuses text that is neither of its two values."""
+    with pytest.raises(ValueError, match=r"^Expected 'Y' or 'N' but found 'yes'!"):
+        _ = boolean().from_text("yes")
+
+
+def test_codecs_alias_types_a_mapping_of_different_codecs(tmp_path: Path) -> None:
+    """Test that the Codecs alias holds codecs of different value types for one reader."""
+
+    @dataclass
+    class MyData:
+        color: Color
+        flag: bool
+
+    codecs: Codecs = {Color: COLOR, bool: boolean()}
+    path = tmp_path / "test.csv"
+    _ = path.write_text("'1,2,3',Y\n")
+
+    with CsvReader.from_path[MyData](path, header=False, codecs=codecs) as reader:
+        assert list(reader) == [MyData(Color(1, 2, 3), True)]
 
 
 def test_reader_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> None:
