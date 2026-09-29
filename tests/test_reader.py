@@ -395,6 +395,34 @@ def test_reader_reads_standard_csv_quoting(tmp_path: Path) -> None:
         ]
 
 
+@dataclass
+class Feature:
+    """A record of free text read without quoting."""
+
+    name: str
+    notes: str
+
+
+def test_reader_reads_quotes_as_text_without_quoting(tmp_path: Path) -> None:
+    """Test that without quoting a quote is text, and one opening a field does not join lines."""
+    (tmp_path / "test.tsv").write_text('"quoted\ta"b\nnext\t"\n""\tlast"\n')
+
+    with TsvReader.from_path[Feature](tmp_path / "test.tsv", header=False, quoting=False) as reader:
+        assert list(reader) == [
+            Feature('"quoted', 'a"b'),
+            Feature("next", '"'),
+            Feature('""', 'last"'),
+        ]
+
+
+def test_reader_reads_quotes_as_text_without_quoting_from_a_stream(tmp_path: Path) -> None:
+    """Test that the reader constructor takes quoting, as from_path does."""
+    (tmp_path / "test.tsv").write_text('name\tnotes\n"quoted\ta"b\n')
+
+    with TsvReader[Feature](open(tmp_path / "test.tsv"), quoting=False) as reader:
+        assert list(reader) == [Feature('"quoted', 'a"b')]
+
+
 SampleId = NewType("SampleId", str)
 
 

@@ -54,6 +54,9 @@ class WriterOptions(TypedDict, total=False, closed=True):
     comment_prefixes: Sequence[str]
     """The prefixes a comment line may start with; the first is added to lines without one."""
 
+    quoting: bool
+    """Whether fields are quoted when needed, as in CSV, or never, as in formats like BED."""
+
 
 class DelimitedDataWriter(
     DelimitedData,
@@ -71,6 +74,7 @@ class DelimitedDataWriter(
         codecs: Codecs = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
         comment_prefixes: Sequence[str] = DEFAULT_COMMENT_PREFIXES,
+        quoting: bool = True,
     ) -> None:
         """Instantiate a new delimited record writer.
 
@@ -81,6 +85,8 @@ class DelimitedDataWriter(
             enc_hook: encode custom types anywhere in a record, like msgspec's `enc_hook`.
             comment_prefixes: the prefixes a comment line may start with; the first is added to
                 comment lines written without one.
+            quoting: whether fields are quoted when needed, or never; without quoting, text
+                holding the delimiter or a line break cannot be written and is refused.
         """
         record_type = cast(type[RecordType], self._bound_record_type())
 
@@ -89,6 +95,7 @@ class DelimitedDataWriter(
         self._record_type: type[RecordType] = record_type
         self._none_field: str = none_field
         self._enc_hook: Callable[[Any], Any] | None = enc_hook
+        self._quoting: bool = quoting
         if not comment_prefixes:
             raise ValueError("comment_prefixes must hold at least one prefix!")
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
@@ -114,8 +121,8 @@ class DelimitedDataWriter(
             handle,
             delimiter=self.delimiter,
             lineterminator=linesep,
-            quotechar='"',
-            quoting=csv.QUOTE_MINIMAL,
+            quotechar='"' if quoting else None,
+            quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         )
 
     @override
@@ -181,7 +188,28 @@ class DelimitedDataWriter(
         ]
         if self._extra_field is not None:
             row.extend(getattr(record, self._extra_field))
-        self._writer.writerow(row)
+        try:
+            self._writer.writerow(row)
+        except csv.Error as exception:
+            if self._quoting:
+                raise
+            raise self._unquotable(row) from exception
+
+    def _unquotable(self, row: list[str]) -> ValueError:
+        """Explain which field of a row cannot be written without quoting."""
+        index, reason = next(
+            (
+                (index, f"its text holds the delimiter or a line break: {text!r}")
+                for index, text in enumerate(row)
+                if self.delimiter in text or "\n" in text or "\r" in text
+            ),
+            (0, "a record of one empty field must be quoted"),
+        )
+        name = self._header[index] if index < len(self._header) else self._extra_field
+        return ValueError(
+            f"Cannot write field '{name}' of {self._record_type.__name__} without quoting,"
+            + f" because {reason}!"
+        )
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
