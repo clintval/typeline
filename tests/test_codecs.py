@@ -87,6 +87,14 @@ def test_delimited_codec_round_trips(codec: FieldCodec[Any], text: str, value: A
     assert codec.into_text(value) == text
 
 
+@pytest.mark.parametrize("trailing_sep", [True, False])
+def test_delimited_codec_reads_an_optional_trailing_separator(trailing_sep: bool) -> None:
+    """Test that a delimited codec reads text whether or not it ends with a separator."""
+    codec = delimited(int, trailing_sep=trailing_sep)
+    assert codec.from_text("1,2,") == [1, 2]
+    assert codec.from_text("1,2") == [1, 2]
+
+
 def test_reader_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> None:
     """Test that the reader reads a field with the codec registered for its type."""
 

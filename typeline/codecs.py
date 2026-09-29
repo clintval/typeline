@@ -47,7 +47,8 @@ def delimited(
     Args:
         item: read each item from its text, e.g. `int`.
         sep: the separator between items.
-        trailing_sep: whether the text ends with a separator, e.g. `1,2,3,`.
+        trailing_sep: whether to write a separator after the last item, e.g. `1,2,3,`. One is
+            accepted when reading either way.
         container: the collection to build from the items, e.g. `tuple`.
 
     Example:
@@ -62,7 +63,7 @@ def delimited(
     """
 
     def from_text(text: str) -> Collection[ItemType]:
-        stripped = text.removesuffix(sep) if trailing_sep else text
+        stripped = text.removesuffix(sep)
         return container([item(part) for part in stripped.split(sep)] if stripped else [])
 
     def into_text(value: Collection[Any]) -> str:
