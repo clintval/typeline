@@ -63,29 +63,94 @@ MyData(field1=20, field2='test2', field3=None)
 
 ```
 
-### Custom Field Formats
+### Any Text Stream
 
-A `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
-Custom types nested inside a field are handled by `dec_hook` and `enc_hook`, as in msgspec.
+Subscript the class instead of `from_path` to read or write any open text stream.
 
 ```pycon
->>> from typeline.codecs import delimited
+>>> import gzip
 >>>
->>> @dataclass
-... class Feature:
-...     name: str
-...     blocks: list[int]
+>>> with TsvWriter[MyData](gzip.open(f"{temp_file.name}.gz", "wt")) as writer:
+...     writer.write(MyData(10, "test1", 0.2))
 >>>
->>> codecs = {list[int]: delimited(int, trailing_sep=True)}
->>>
->>> with TsvWriter.from_path[Feature](temp_file.name, codecs=codecs) as writer:
-...     writer.write(Feature("exon", [1, 2, 3]))
->>>
->>> with TsvReader.from_path[Feature](temp_file.name, header=False, codecs=codecs) as reader:
+>>> with TsvReader[MyData](gzip.open(f"{temp_file.name}.gz", "rt"), header=False) as reader:
 ...     print(list(reader))
-[Feature(name='exon', blocks=[1, 2, 3])]
+[MyData(field1=10, field2='test1', field3=0.2)]
 
 ```
+
+### Custom Field Formats
+
+Lists, dicts, sets, enums, and nested dataclasses are written as JSON by default.
+For any other text format, a `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
+Helpers in `typeline.codecs` cover common formats.
+
+```pycon
+>>> from datetime import date
+>>> from typeline import Codecs, FieldCodec
+>>> from typeline.codecs import boolean, delimited
+>>>
+>>> @dataclass
+... class Visit:
+...     patient: str
+...     seen: date
+...     consented: bool
+...     blocks: list[int]
+>>>
+>>> codecs: Codecs = {
+...     date: FieldCodec(from_text=date.fromisoformat, into_text=date.isoformat),
+...     bool: boolean(true="Y", false="N"),
+...     list[int]: delimited(int, sep=";"),
+... }
+>>>
+>>> with TsvWriter.from_path[Visit](temp_file.name, codecs=codecs) as writer:
+...     writer.write(Visit("P-001", date(2026, 9, 29), True, [3, 1, 4]))
+>>>
+>>> print(open(temp_file.name).read(), end="")
+P-001	2026-09-29	Y	3;1;4
+>>>
+>>> with TsvReader.from_path[Visit](temp_file.name, header=False, codecs=codecs) as reader:
+...     print(list(reader))
+[Visit(patient='P-001', seen=datetime.date(2026, 9, 29), consented=True, blocks=[3, 1, 4])]
+
+```
+
+Custom types nested anywhere inside a field, like a `list[Interval]`, are handled by `dec_hook` and `enc_hook`, with the same meaning as in msgspec.
+
+### Your Own Format
+
+Subclass a reader to give a format its own defaults, and use it like any other reader.
+
+```pycon
+>>> from typing import TextIO
+>>> from typing_extensions import Unpack
+>>> from typeline import ReaderOptions, RecordType
+>>> from typeline.codecs import key_value
+>>>
+>>> class VcfLikeReader(TsvReader[RecordType]):
+...     def __init__(self, handle: TextIO, /, **options: Unpack[ReaderOptions]) -> None:
+...         _ = options.setdefault("header", False)
+...         _ = options.setdefault("comment_prefixes", {"#"})
+...         _ = options.setdefault("none_field", ".")
+...         _ = options.setdefault("codecs", {dict[str, str]: key_value()})
+...         super().__init__(handle, **options)
+>>>
+>>> @dataclass
+... class Site:
+...     chrom: str
+...     pos: int
+...     ident: str | None
+...     info: dict[str, str]
+>>>
+>>> _ = open(temp_file.name, "w").write("#CHROM\tPOS\tID\tINFO\nchr1\t100\t.\tDP=10;AF=0.5\n")
+>>>
+>>> with VcfLikeReader.from_path[Site](temp_file.name) as reader:
+...     print(list(reader))
+[Site(chrom='chr1', pos=100, ident=None, info={'DP': '10', 'AF': '0.5'})]
+
+```
+
+More examples, from sample sheets to GFF3 and BED-like data, are in [`tests/test_real_world_examples.py`](./tests/test_real_world_examples.py).
 
 ## Development and Testing
 
