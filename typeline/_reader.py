@@ -78,23 +78,34 @@ class _BoundSubscriptableClassmethod(Generic[OwnerType, ConstructorParams]):
         self, record_type: type[RecordType]
     ) -> "Callable[ConstructorParams, DelimitedDataReader[RecordType]]": ...
 
-    def __getitem__(self, record_type: type[Any]) -> Callable[..., Any]:
+    def __getitem__(self, record_type: object) -> Callable[..., Any]:
         """Bind the record type, returning a constructor for a reader of that record type."""
         self._refuse_bound_owner()
+        if not isinstance(record_type, type) or not is_dataclass(record_type):
+            raise TypeError(
+                f"{self._usage} must be subscripted with a dataclass, not {record_type}!"
+            )
         return partial(self._func, self._owner[record_type])
 
     def __call__(self, *_args: Never, **_kwargs: Never) -> NoReturn:
         """Refuse to construct a reader without a record type."""
         self._refuse_bound_owner()
-        name = f"{self._owner.__name__}.{self.__name__}"
-        raise TypeError(f"{name} must be subscripted with a dataclass, e.g. {name}[MyData]!")
+        raise TypeError(
+            f"{self._usage} must be subscripted with a dataclass, e.g. {self._usage}[MyData]!"
+        )
+
+    @property
+    def _usage(self) -> str:
+        """The unsubscripted reader and method name, e.g. `TsvReader.from_path`."""
+        unbound = next(c for c in self._owner.__mro__ if c._parameterized_record_type is None)
+        return f"{unbound.__name__}.{self.__name__}"
 
     def _refuse_bound_owner(self) -> None:
         """Refuse access through a reader class that already has a record type."""
         if self._owner._parameterized_record_type is not None:
             raise TypeError(
-                f"{self._owner.__name__} already has a record type! Subscript {self.__name__}"
-                + f" on an unsubscripted reader instead, e.g. TsvReader.{self.__name__}[MyData]."
+                f"{self._owner.__name__} already has a record type!"
+                + f" Use {self._usage}[MyData] instead."
             )
 
 
@@ -215,14 +226,17 @@ class DelimitedDataReader(
             return alias
         key = (cls, item)
         if key not in _PARAMETERIZED_READERS:
-            _PARAMETERIZED_READERS[key] = new_class(
-                f"{cls.__name__}[{item.__name__}]",
-                (alias,),
-                exec_body=lambda ns: ns.update({
-                    "__module__": cls.__module__,
-                    "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
-                    "_parameterized_record_type": item,
-                }),
+            _ = _PARAMETERIZED_READERS.setdefault(
+                key,
+                new_class(
+                    f"{cls.__name__}[{item.__name__}]",
+                    (alias,),
+                    exec_body=lambda ns: ns.update({
+                        "__module__": cls.__module__,
+                        "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
+                        "_parameterized_record_type": item,
+                    }),
+                ),
             )
         return _PARAMETERIZED_READERS[key]
 
@@ -394,14 +408,17 @@ class DelimitedDataReader(
             dec_hook: a custom decoder hook for the underlying JSON decoder.
         """
         handle = Path(path).expanduser().open("r")
-        reader = cls(
-            handle,
-            header=header,
-            comment_prefixes=comment_prefixes,
-            none_field=none_field,
-            dec_hook=dec_hook,
-        )
-        return reader
+        try:
+            return cls(
+                handle,
+                header=header,
+                comment_prefixes=comment_prefixes,
+                none_field=none_field,
+                dec_hook=dec_hook,
+            )
+        except BaseException:
+            handle.close()
+            raise
 
 
 class CsvReader(DelimitedDataReader[RecordType], delimiter=","):

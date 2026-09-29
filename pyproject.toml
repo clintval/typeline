@@ -135,11 +135,19 @@ module = ".conftest"
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["typeline/"]
+include = ["typeline/", "tests/test_reader_api.py"]
+enableTypeIgnoreComments = false
+reportUnnecessaryTypeIgnoreComment = "error"
 failOnWarnings = false
 reportAny = false
 reportExplicitAny = false
 pythonVersion = "3.10"
+
+[tool.ty.analysis]
+respect-type-ignore-comments = false
+
+[tool.ty.rules]
+unused-ignore-comment = "error"
 
 [tool.ruff]
 include        = ["typeline/**", "tests/**"]

@@ -11,7 +11,6 @@ from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import TsvReader
 from typeline import TsvWriter
-from typeline._data_types import RecordType
 
 from .conftest import ComplexMetric
 from .conftest import SimpleMetric
@@ -69,18 +68,6 @@ def test_tsv_reader_is_set_to_use_tab(tmp_path: Path) -> None:
 
     with TsvReader[SimpleMetric](open(tmp_path / "test.txt", "r")) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
-
-
-def test_reader_raises_exception_on_non_dataclass(tmp_path: Path) -> None:
-    """Test that the reader will raise an exception for non-dataclasses."""
-
-    class MyTest:
-        """A test metric."""
-
-    (tmp_path / "test.txt").touch()
-
-    with pytest.raises(TypeError, match=r"CsvReader must be subscripted with a dataclass"):
-        CsvReader.from_path[MyTest](tmp_path / "test.txt")  # type: ignore[type-var]  # ty: ignore[invalid-argument-type]
 
 
 def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
@@ -359,82 +346,3 @@ def test_reader_should_be_usable_right_after_file_handle_open(tmp_path: Path) ->
 
     with open(tmp_path / "test.txt", "r") as handle, CsvReader[SimpleMetric](handle) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=None)]
-
-
-def test_reader_from_path_binds_record_type_from_subscript(tmp_path: Path) -> None:
-    """Test that subscripting from_path binds the record type of the reader."""
-    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
-    (tmp_path / "test.tsv").write_text("field1\tfield2\tfield3\n1\tname\t0.2\n")
-    expected = [SimpleMetric(field1=1, field2="name", field3=0.2)]
-
-    with CsvReader.from_path[SimpleMetric](tmp_path / "test.csv") as reader:
-        assert type(reader) is CsvReader[SimpleMetric]
-        assert isinstance(reader, CsvReader)
-        assert list(reader) == expected
-
-    with TsvReader.from_path[SimpleMetric](tmp_path / "test.tsv") as reader:
-        assert type(reader) is TsvReader[SimpleMetric]
-        assert list(reader) == expected
-
-
-def test_reader_constructor_binds_record_type_from_subscript(tmp_path: Path) -> None:
-    """Test that subscripting the reader class binds the record type of the reader."""
-    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
-
-    with CsvReader[SimpleMetric](open(tmp_path / "test.csv")) as reader:
-        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
-
-    assert CsvReader[SimpleMetric] is CsvReader[SimpleMetric]
-    assert TsvReader[SimpleMetric].delimiter == "\t"
-
-
-def test_reader_from_path_keeps_its_name_and_docs() -> None:
-    """Test that the subscriptable from_path still looks like the classmethod it wraps."""
-    assert CsvReader.from_path.__name__ == "from_path"
-    assert CsvReader.from_path.__doc__ is not None
-    assert CsvReader.from_path.__doc__.startswith(
-        "Construct a delimited data reader from a file path."
-    )
-
-
-def test_reader_requires_a_record_type(tmp_path: Path) -> None:
-    """Test that a reader without a record type raises an error."""
-    (tmp_path / "test.txt").write_text("field1,field2,field3\n")
-    with pytest.raises(
-        TypeError, match=r"CsvReader.from_path must be subscripted with a dataclass"
-    ):
-        CsvReader.from_path(tmp_path / "test.txt")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match=r"TsvReader must be subscripted with a dataclass"):
-        TsvReader(open(tmp_path / "test.txt"))
-
-
-def test_reader_rejects_from_path_on_a_subscripted_reader(tmp_path: Path) -> None:
-    """Test that from_path cannot be used through a reader class that already has a record type."""
-    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
-    with pytest.raises(TypeError, match=r"CsvReader\[SimpleMetric\] already has a record type"):
-        CsvReader[SimpleMetric].from_path(tmp_path / "test.csv")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match=r"CsvReader\[SimpleMetric\] already has a record type"):
-        CsvReader[SimpleMetric].from_path[SimpleMetric](tmp_path / "test.csv")
-
-
-def test_reader_generic_subclass_supports_subscripted_from_path(tmp_path: Path) -> None:
-    """Test that a generic subclass of a reader supports a subscripted from_path."""
-
-    class MyCsvReader(CsvReader[RecordType]):
-        """A custom comma-delimited reader."""
-
-    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
-    with MyCsvReader.from_path[SimpleMetric](tmp_path / "test.csv") as reader:
-        assert type(reader) is MyCsvReader[SimpleMetric]
-        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
-
-
-def test_reader_subclass_of_subscripted_reader_keeps_record_type(tmp_path: Path) -> None:
-    """Test that subclassing a subscripted reader keeps the bound record type."""
-
-    class SimpleMetricReader(CsvReader[SimpleMetric]):
-        """A reader dedicated to simple metrics."""
-
-    (tmp_path / "test.csv").write_text("field1,field2,field3\n1,name,0.2\n")
-    with SimpleMetricReader(open(tmp_path / "test.csv")) as reader:
-        assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=0.2)]
