@@ -2,25 +2,41 @@ name: wheels
 
 on:
   pull_request:
-  workflow_call:
   workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: 0.12.20
 
 jobs:
   build-wheels:
+    name: build-wheels
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # to check out the repository
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          python-version: 3.11
+          persist-credentials: false
+
+      - name: Install uv and Python 3.11
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.11"
+          enable-cache: "false"
 
       - name: Build wheels
-        run: pip wheel --no-deps -w wheelhouse .
+        run: uv build --wheel --out-dir wheelhouse
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: typeline-wheels
           path: ./wheelhouse/typeline*.whl

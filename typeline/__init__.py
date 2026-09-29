@@ -1,21 +1,29 @@
+from ._binding import FixedRecordType
+from ._comment import Comment
 from ._data_types import RecordType
-from ._data_types import build_union
-from ._data_types import is_union
 from ._reader import CsvReader
 from ._reader import DelimitedDataReader
+from ._reader import ReaderOptions
 from ._reader import TsvReader
 from ._writer import CsvWriter
 from ._writer import DelimitedDataWriter
 from ._writer import TsvWriter
+from ._writer import WriterOptions
+from .codecs import Codecs
+from .codecs import FieldCodec
 
 __all__ = [
+    "Codecs",
+    "Comment",
     "CsvReader",
-    "DelimitedDataReader",
-    "TsvReader",
     "CsvWriter",
+    "DelimitedDataReader",
     "DelimitedDataWriter",
-    "TsvWriter",
+    "FieldCodec",
+    "FixedRecordType",
+    "ReaderOptions",
     "RecordType",
-    "build_union",
-    "is_union",
+    "TsvReader",
+    "TsvWriter",
+    "WriterOptions",
 ]

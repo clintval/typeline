@@ -6,10 +6,10 @@ authors = [{ name = "Clint Valentine", email = "valentine.clint@gmail.com" }]
 license = "MIT"
 readme = "README.md"
 keywords = ["dataclass", "IO", "delimited-data", "CSV", "TSV", "msgspec"]
-include = ["CONTRIBUTING.md", "LICENSE"]
-requires-python = ">=3.10"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
 dependencies = [
-    "msgspec>=0.19",
+    "msgspec>=0.20",
     "typing-extensions>=4.12"
 ]
 classifiers = [
@@ -21,10 +21,10 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: File Formats",
     "Topic :: Software Development :: Documentation",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -36,26 +36,31 @@ classifiers = [
 "repository" = "https://github.com/clintval/typeline"
 "Bug Tracker" = "https://github.com/clintval/typeline/issues"
 
-[tool.poetry]
-requires-poetry = ">=2.0"
-
-[tool.poetry.requires-plugins]
-poethepoet = ">=0.33.0"
-
-[tool.poetry.group.dev.dependencies]
-basedpyright = "^1.28"
-mypy = "^1.15"
-pytest = "^8.3"
-pytest-cov = "^6.0"
-pytest-doctestplus = "^1.4"
-ruff = "^0.11"
+[dependency-groups]
+dev = [
+    "basedpyright ~=1.40",
+    "mypy ~=2.3",
+    "poethepoet ~=0.48",
+    "pytest ~=9.1",
+    "pytest-cov ~=7.1",
+    "pytest-doctestplus ~=1.7",
+    "ruff ~=0.16",
+    "ty ~=0.0.83",
+    "validate-pyproject[all] ~=0.26",
+]
 
 [build-system]
-requires = ["poetry-core>=1.8"]
-build-backend = "poetry.core.masonry.api"
+requires      = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poe]
-poetry_command = "task"
+[tool.hatch.build.targets.sdist]
+only-include = ["typeline", "tests", "README.md", "CONTRIBUTING.md", "LICENSE"]
+
+[tool.uv]
+# Ignore releases younger than a week, so a compromised publish has time to be
+# caught before it can be locked. Must stay >= the Dependabot `cooldown` in
+# .github/dependabot.yml, or Dependabot will propose versions that can't lock.
+exclude-newer = "1 week"
 
 [tool.poe.tasks]
 fix-format = "ruff format"
@@ -64,18 +69,21 @@ fix-lint = "ruff check --fix"
 fix-all.ignore_fail = "return_non_zero"
 fix-all.sequence = ["fix-format", "fix-lint"]
 
-check-lock = "poetry check --lock"
+check-lock = "uv lock --check"
+check-pyproject = "validate-pyproject pyproject.toml"
 check-format = "ruff format --check --diff"
 check-lint = "ruff check"
 check-tests = "pytest --doctest-glob='*.md'"
 
 _check-mypy = "mypy"
 _check-pyright = "basedpyright"
-check-typing.sequence = ["_check-mypy", "_check-pyright"]
+_check-ty = "ty check"
+check-typing.sequence = ["_check-mypy", "_check-pyright", "_check-ty"]
 
 check-all.ignore_fail = "return_non_zero"
 check-all.sequence = [
     "check-lock",
+    "check-pyproject",
     "check-format",
     "check-lint",
     "check-tests",
@@ -133,16 +141,25 @@ module = ".conftest"
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["typeline/"]
-failOnWarnings = false
+include = ["typeline/", "tests/test_reader_api.py", "tests/test_writer_api.py", "tests/test_real_world_examples.py"]
+enableTypeIgnoreComments = false
+reportUnnecessaryTypeIgnoreComment = "error"
+reportImportCycles = false
+failOnWarnings = true
 reportAny = false
 reportExplicitAny = false
-pythonVersion = "3.10"
+pythonVersion = "3.11"
+
+[tool.ty.analysis]
+respect-type-ignore-comments = false
+
+[tool.ty.rules]
+unused-ignore-comment = "error"
 
 [tool.ruff]
 include        = ["typeline/**", "tests/**"]
 line-length    = 100
-target-version = "py310"
+target-version = "py311"
 output-format  = "full"
 preview        = true
 
