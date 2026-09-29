@@ -124,7 +124,7 @@ Custom types nested anywhere inside a field, like a `list[Interval]`, are handle
 
 ### Your Own Format
 
-Subclass a reader to give a format its own defaults, and use it like any other reader.
+Subclass a reader to give a format its own defaults.
 
 ```pycon
 >>> from typing import TextIO
@@ -150,6 +150,22 @@ Subclass a reader to give a format its own defaults, and use it like any other r
 >>> _ = open(temp_file.name, "w").write("#CHROM\tPOS\tID\tINFO\nchr1\t100\t.\tDP=10;AF=0.5\n")
 >>>
 >>> with VcfLikeReader.from_path[Site](temp_file.name) as reader:
+...     print(list(reader))
+[Site(chrom='chr1', pos=100, ident=None, info={'DP': '10', 'AF': '0.5'})]
+
+```
+
+Type checkers see `VcfLikeReader.from_path[Site](...)` as a `TsvReader[Site]`, its closest built-in reader.
+
+A reader fixed to one record type can add `FixedRecordType` to its bases, and is then built without a subscript.
+
+```pycon
+>>> from typeline import FixedRecordType
+>>>
+>>> class SiteReader(VcfLikeReader[Site], FixedRecordType):
+...     pass
+>>>
+>>> with SiteReader.from_path(temp_file.name) as reader:
 ...     print(list(reader))
 [Site(chrom='chr1', pos=100, ident=None, info={'DP': '10', 'AF': '0.5'})]
 

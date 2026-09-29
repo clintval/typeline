@@ -37,6 +37,9 @@ class FieldCodec(Generic[ValueType]):
     into_text: Callable[[ValueType], str]
     """Write a value into the text of a field."""
 
+    missing: str | None = None
+    """The text for None in this field, used instead of the reader's or writer's `none_field`."""
+
 
 def delimited(
     item: Callable[[str], ItemType],
@@ -151,15 +154,15 @@ def boolean(true: str = "Y", false: str = "N") -> FieldCodec[bool]:
 
 
 def nullable(codec: FieldCodec[ValueType], missing: str) -> FieldCodec[ValueType | None]:
-    """Build a codec that reads a field's own missing marker as None, e.g. `0` for a BED color.
+    """Build a codec that reads and writes None as a field's own missing text, e.g. `0` for a color.
 
     Example:
         ```pycon
         >>> count = nullable(FieldCodec(from_text=int, into_text=str), missing="-")
         >>> count.from_text("-") is None
         True
-        >>> count.from_text("7")
-        7
+        >>> count.into_text(None)
+        '-'
 
         ```
     """
@@ -170,4 +173,4 @@ def nullable(codec: FieldCodec[ValueType], missing: str) -> FieldCodec[ValueType
     def into_text(value: ValueType | None) -> str:
         return missing if value is None else codec.into_text(value)
 
-    return FieldCodec(from_text=from_text, into_text=into_text)
+    return FieldCodec(from_text=from_text, into_text=into_text, missing=missing)

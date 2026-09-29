@@ -1,3 +1,4 @@
+from ._binding import FixedRecordType
 from ._data_types import RecordType
 from ._reader import CsvReader
 from ._reader import DelimitedDataReader
@@ -17,6 +18,7 @@ __all__ = [
     "DelimitedDataReader",
     "DelimitedDataWriter",
     "FieldCodec",
+    "FixedRecordType",
     "ReaderOptions",
     "RecordType",
     "TsvReader",

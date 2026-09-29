@@ -16,6 +16,8 @@ from typing_extensions import assert_type
 from typing_extensions import override
 
 from typeline import CsvReader
+from typeline import DelimitedDataReader
+from typeline import FixedRecordType
 from typeline import ReaderOptions
 from typeline import RecordType
 from typeline import TsvReader
@@ -114,14 +116,14 @@ def test_from_path_without_a_subscript(csv_path: Path) -> None:
     with pytest.raises(
         TypeError, match=r"^CsvReader.from_path must be subscripted with a dataclass"
     ):
-        CsvReader.from_path(csv_path)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+        CsvReader.from_path(csv_path)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[no-matching-overload]
 
 
 def test_from_path_on_a_subscripted_reader(csv_path: Path) -> None:
     """Test that from_path through a reader class that already has a record type is refused."""
     message = r"^CsvReader\[MyData\] already has a record type! Use CsvReader.from_path\[MyData\]"
     with pytest.raises(TypeError, match=message):
-        CsvReader[MyData].from_path(csv_path)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+        CsvReader[MyData].from_path(csv_path)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[no-matching-overload]
 
 
 def test_from_path_subscripted_twice(csv_path: Path) -> None:
@@ -195,3 +197,39 @@ def test_from_path_uses_the_defaults_of_a_subclass(tmp_path: Path) -> None:
 
     with HeaderlessCsvReader.from_path[MyData](path) as reader:
         assert list(reader) == EXPECTED
+
+
+class MyDataReader(CsvReader[MyData], FixedRecordType):
+    """A comma-delimited reader fixed to one record type."""
+
+
+class UnmarkedMyDataReader(CsvReader[MyData]):
+    """A comma-delimited reader fixed to one record type, without opting in to from_path."""
+
+
+def test_from_path_on_a_reader_with_a_fixed_record_type(csv_path: Path) -> None:
+    """Test that a reader fixed to one record type builds itself with an unsubscripted from_path."""
+    with MyDataReader.from_path(csv_path, header=True) as reader:
+        _ = assert_type(reader, MyDataReader)
+        assert type(reader) is MyDataReader
+        assert list(reader) == EXPECTED
+
+
+def test_from_path_on_a_reader_fixed_without_opting_in(csv_path: Path) -> None:
+    """Test that a reader fixed to one record type must opt in to an unsubscripted from_path."""
+    message = r"^UnmarkedMyDataReader already has a record type! Add FixedRecordType to its bases"
+    with pytest.raises(TypeError, match=message):
+        UnmarkedMyDataReader.from_path(csv_path)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[no-matching-overload]
+
+
+def test_base_reader_without_a_delimiter(csv_path: Path) -> None:
+    """Test that the base reader, which has no delimiter, is refused with a clear message."""
+    message = r"^DelimitedDataReader has no delimiter! Subclass it with one"
+    with csv_path.open() as handle, pytest.raises(TypeError, match=message):
+        _ = DelimitedDataReader[MyData](handle)
+
+
+def test_reader_subscripted_with_two_types() -> None:
+    """Test that a reader subscripted with more than one type is refused."""
+    with pytest.raises(TypeError, match=r"^CsvReader takes one record type, but got 2!"):
+        _ = CsvReader[MyData, int]  # type: ignore[type-arg]  # pyright: ignore[reportInvalidTypeArguments]  # ty: ignore[invalid-type-arguments]

@@ -15,6 +15,8 @@ from typing_extensions import assert_type
 from typing_extensions import override
 
 from typeline import CsvWriter
+from typeline import DelimitedDataWriter
+from typeline import FixedRecordType
 from typeline import RecordType
 from typeline import TsvWriter
 from typeline import WriterOptions
@@ -131,7 +133,7 @@ def test_from_path_on_a_subscripted_writer(tmp_path: Path) -> None:
     """Test that from_path through a writer class that already has a record type is refused."""
     message = r"^CsvWriter\[MyData\] already has a record type! Use CsvWriter.from_path\[MyData\]"
     with pytest.raises(TypeError, match=message):
-        CsvWriter[MyData].from_path(tmp_path / "test.csv")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+        CsvWriter[MyData].from_path(tmp_path / "test.csv")  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[no-matching-overload]
 
 
 def test_from_path_subscripted_twice(tmp_path: Path) -> None:
@@ -165,3 +167,30 @@ def test_write_refuses_a_record_of_another_type() -> None:
     writer = CsvWriter[MyData](StringIO())
     with pytest.raises(ValueError, match=r"^Expected MyData but found OtherData!"):
         writer.write(OtherData(1))  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+
+
+class MyDataWriter(CsvWriter[MyData], FixedRecordType):
+    """A comma-delimited writer fixed to one record type."""
+
+
+def test_from_path_on_a_writer_with_a_fixed_record_type(tmp_path: Path) -> None:
+    """Test that a writer fixed to one record type builds itself with an unsubscripted from_path."""
+    with MyDataWriter.from_path(tmp_path / "test.csv", none_field="NA") as writer:
+        _ = assert_type(writer, MyDataWriter)
+        writer.write(RECORD)
+
+    assert (tmp_path / "test.csv").read_text() == "1,NA\n"
+
+
+def test_base_writer_without_a_delimiter() -> None:
+    """Test that the base writer, which has no delimiter, is refused with a clear message."""
+    with pytest.raises(TypeError, match=r"^DelimitedDataWriter has no delimiter! Subclass it"):
+        _ = DelimitedDataWriter[MyData](StringIO())
+
+
+def test_from_path_with_an_unknown_keyword_leaves_an_existing_file_alone(tmp_path: Path) -> None:
+    """Test that from_path refuses unknown options before it opens, and so empties, the file."""
+    _ = (tmp_path / "test.csv").write_text("keep me\n")
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'nonefield'"):
+        CsvWriter.from_path[MyData](tmp_path / "test.csv", nonefield=".")  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]  # ty: ignore[unknown-argument]
+    assert (tmp_path / "test.csv").read_text() == "keep me\n"

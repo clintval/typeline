@@ -30,7 +30,8 @@ from ._binding import SubscriptableClassmethod
 from ._data_types import RecordType
 from ._data_types import accepts_none
 from ._data_types import field_types
-from ._data_types import strip_optional
+from ._data_types import find_codec
+from ._data_types import is_text
 from ._data_types import type_name
 from .codecs import NO_CODECS
 from .codecs import Codecs
@@ -110,17 +111,15 @@ class DelimitedDataReader(
         self._header: list[str] = [field.name for field in self._fields]
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._field_codecs: dict[str, FieldCodec[Any]] = {
-            name: codecs[strip_optional(field_type)]
+            name: codec
             for name, field_type in self._field_type_map.items()
-            if strip_optional(field_type) in codecs
+            if (codec := find_codec(field_type, codecs)) is not None
         }
         self._optional_fields: set[str] = {
             name for name, field_type in self._field_type_map.items() if accepts_none(field_type)
         }
         self._text_fields: set[str] = {
-            name
-            for name, field_type in self._field_type_map.items()
-            if strip_optional(field_type) is str
+            name for name, field_type in self._field_type_map.items() if is_text(field_type)
         }
 
         # Build the delimited dictionary reader, filtering out any comment lines along the way.
@@ -183,10 +182,12 @@ class DelimitedDataReader(
 
         codec = self._field_codecs.get(field_name)
         if codec is not None:
+            if codec.missing is not None and value == codec.missing:
+                return None
             try:
                 return codec.from_text(value)
             except Exception as exception:
-                field_type = type_name(strip_optional(self._field_type_map[field_name]))
+                field_type = type_name(self._field_type_map[field_name])
                 raise ValueError(
                     f"Could not read field '{field_name}' of type {field_type} from text"
                     + f" '{value}' on line {self._line_count}!"

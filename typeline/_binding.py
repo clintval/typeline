@@ -35,6 +35,22 @@ ConstructorParams = ParamSpec("ConstructorParams")
 """The parameters of a subscriptable classmethod, after the record type is bound."""
 
 
+FixedType = TypeVar("FixedType", bound="FixedRecordType")
+"""The type variable for a reader or writer class fixed to one record type."""
+
+
+class FixedRecordType:
+    """Mark a reader or writer fixed to one record type, so `from_path` needs no subscript.
+
+    Example:
+        ```python
+        class BedReader(TsvReader[Bed], FixedRecordType): ...
+
+        reader = BedReader.from_path("regions.bed")
+        ```
+    """
+
+
 class DelimitedData:
     """A reader or writer of delimited data, bound to a record type by subscripting its class."""
 
@@ -52,6 +68,12 @@ class DelimitedData:
 
     def __class_getitem__(cls, item: Any) -> Any:
         """Parameterize the class, binding a concrete record type so classmethods can see it."""
+        if cls._parameterized_record_type is not None:
+            raise TypeError(f"{cls.__name__} already has a record type!")
+        if isinstance(item, tuple):
+            if len(item) != 1:
+                raise TypeError(f"{cls.__name__} takes one record type, but got {len(item)}!")
+            item = item[0]
         alias = super().__class_getitem__(item)  # type: ignore[misc]  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[unresolved-attribute]
         if not isinstance(item, type) or not is_dataclass(item):
             return alias
@@ -66,17 +88,31 @@ class DelimitedData:
                         "__module__": cls.__module__,
                         "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
                         "_parameterized_record_type": item,
+                        "_is_subscripted": True,
                     }),
                 ),
             )
         return _BOUND_CLASSES[key]
 
     def _bound_record_type(self) -> type[Any]:
-        """Return the record type bound to this class, refusing an unsubscripted class."""
+        """Return the record type bound to this class, refusing a class that cannot be built."""
+        if not hasattr(type(self), "delimiter"):
+            name = unbound_name(type(self))
+            raise TypeError(
+                f"{name} has no delimiter! Subclass it with one,"
+                + f" e.g. class MyFormat({name}[RecordType], delimiter='|')."
+            )
         if self._parameterized_record_type is None:
             name = type(self).__name__
             raise TypeError(f"{name} must be subscripted with a dataclass, e.g. {name}[MyData]!")
         return self._parameterized_record_type
+
+
+def unbound_name(cls: type[Any]) -> str:
+    """Return the name of the first class, from the given one up, without a record type."""
+    return next(
+        c for c in cls.__mro__ if getattr(c, "_parameterized_record_type", 1) is None
+    ).__name__
 
 
 class BoundSubscriptableClassmethod(Generic[OwnerType, ConstructorParams]):
@@ -133,8 +169,21 @@ class BoundSubscriptableClassmethod(Generic[OwnerType, ConstructorParams]):
             )
         return partial(self._func, self._owner[record_type])
 
-    def __call__(self, *_args: Never, **_kwargs: Never) -> NoReturn:
-        """Refuse to construct without a record type."""
+    @overload
+    def __call__(self, *args: Never, **kwargs: Never) -> NoReturn: ...
+
+    @overload
+    def __call__(
+        self: "BoundSubscriptableClassmethod[type[FixedType], ConstructorParams]",
+        *args: ConstructorParams.args,
+        **kwargs: ConstructorParams.kwargs,
+    ) -> FixedType: ...
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Build a class fixed to one record type, and refuse to build without a record type."""
+        owner = self._owner
+        if owner._parameterized_record_type is not None and issubclass(owner, FixedRecordType):
+            return self._func(owner, *args, **kwargs)
         self._refuse_bound_owner()
         raise TypeError(
             f"{self._usage} must be subscripted with a dataclass, e.g. {self._usage}[MyData]!"
@@ -143,16 +192,22 @@ class BoundSubscriptableClassmethod(Generic[OwnerType, ConstructorParams]):
     @property
     def _usage(self) -> str:
         """The unsubscripted class and method name, e.g. `TsvReader.from_path`."""
-        unbound = next(c for c in self._owner.__mro__ if c._parameterized_record_type is None)
-        return f"{unbound.__name__}.{self.__name__}"
+        return f"{unbound_name(self._owner)}.{self.__name__}"
 
     def _refuse_bound_owner(self) -> None:
-        """Refuse access through a class that already has a record type."""
-        if self._owner._parameterized_record_type is not None:
-            raise TypeError(
-                f"{self._owner.__name__} already has a record type!"
-                + f" Use {self._usage}[MyData] instead."
+        """Refuse to bind a record type through a class that already has one."""
+        owner = self._owner
+        if owner._parameterized_record_type is None:
+            return
+        if owner.__dict__.get("_is_subscripted", False):
+            advice = f"Use {self._usage}[MyData] instead."
+        elif issubclass(owner, FixedRecordType):
+            advice = f"Call {owner.__name__}.{self.__name__}(...) without a subscript."
+        else:
+            advice = (
+                f"Add FixedRecordType to its bases to call {owner.__name__}.{self.__name__}(...)."
             )
+        raise TypeError(f"{owner.__name__} already has a record type! {advice}")
 
 
 class SubscriptableClassmethod(Generic[ConstructorParams]):

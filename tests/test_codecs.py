@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 from typing import Any
 from typing import Optional
 
@@ -348,3 +349,61 @@ def test_codecs_are_found_for_postponed_annotations(tmp_path: Path) -> None:
 
     with CsvReader.from_path[PostponedColor](path, header=False, codecs={Color: COLOR}) as reader:
         assert list(reader) == [PostponedColor(Color(1, 2, 3))]
+
+
+@dataclass
+class OptionalColor:
+    """A record with an optional color, where a codec decides how a missing color looks."""
+
+    name: str
+    color: Color | None
+
+
+def test_nullable_codec_writes_its_missing_marker_for_none(tmp_path: Path) -> None:
+    """Test that a nullable codec writes None as its own missing marker, not the none field."""
+    codecs: Codecs = {Color: nullable(COLOR, missing="0")}
+    path = tmp_path / "test.csv"
+
+    with CsvWriter.from_path[OptionalColor](path, codecs=codecs, none_field=".") as writer:
+        writer.write(OptionalColor("foo", None))
+        writer.write(OptionalColor("bar", Color(1, 2, 3)))
+
+    assert path.read_text() == 'foo,0\nbar,"1,2,3"\n'
+
+    with CsvReader.from_path[OptionalColor](path, header=False, codecs=codecs) as reader:
+        assert list(reader) == [OptionalColor("foo", None), OptionalColor("bar", Color(1, 2, 3))]
+
+
+UPPER: FieldCodec[str] = FieldCodec(from_text=str.lower, into_text=str.upper)
+
+
+@dataclass
+class Shouting:
+    """A record where only the annotated fields are written in upper case."""
+
+    loud: Annotated[str, "upper"]
+    maybe_loud: Annotated[str, "upper"] | None
+    quiet: str
+
+
+def test_codecs_are_found_by_annotated_type(tmp_path: Path) -> None:
+    """Test that a codec keyed on an Annotated type applies only to fields annotated that way."""
+    codecs: Codecs = {Annotated[str, "upper"]: UPPER}
+    path = tmp_path / "test.csv"
+
+    with CsvWriter.from_path[Shouting](path, codecs=codecs) as writer:
+        writer.write(Shouting("hi", "hey", "hello"))
+
+    assert path.read_text() == "HI,HEY,hello\n"
+
+    with CsvReader.from_path[Shouting](path, header=False, codecs=codecs) as reader:
+        assert list(reader) == [Shouting("hi", "hey", "hello")]
+
+
+def test_codecs_for_the_plain_type_apply_to_annotated_fields(tmp_path: Path) -> None:
+    """Test that a codec keyed on a plain type still applies to fields that annotate that type."""
+    path = tmp_path / "test.csv"
+    _ = path.write_text("HI,HEY,HELLO\n")
+
+    with CsvReader.from_path[Shouting](path, header=False, codecs={str: UPPER}) as reader:
+        assert list(reader) == [Shouting("hi", "hey", "hello")]

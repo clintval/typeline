@@ -1,5 +1,8 @@
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
+from typing import Literal
+from typing import NewType
 from typing import Optional
 
 import pytest
@@ -385,4 +388,34 @@ def test_reader_reads_standard_csv_quoting(tmp_path: Path) -> None:
         assert list(reader) == [
             Contact("Doe, Jane", 'said "hi"', ["a", "b"]),
             Contact("O'Brien", "it's fine", []),
+        ]
+
+
+SampleId = NewType("SampleId", str)
+
+
+class Kind(str, Enum):
+    """A text enum whose values look like JSON."""
+
+    Null = "null"
+    Listed = "[x]"
+
+
+@dataclass
+class TextLike:
+    """A record whose fields are text, though not declared as plain `str`."""
+
+    ident: SampleId
+    flag: Literal["true", "false"]
+    kind: Kind
+
+
+def test_reader_keeps_text_in_text_like_fields(tmp_path: Path) -> None:
+    """Test that NewTypes of str, Literals of strings, and str Enums are not parsed as JSON."""
+    (tmp_path / "test.csv").write_text("true,false,null\nnull,true,[x]\n")
+
+    with CsvReader.from_path[TextLike](tmp_path / "test.csv", header=False) as reader:
+        assert list(reader) == [
+            TextLike(SampleId("true"), "false", Kind.Null),
+            TextLike(SampleId("null"), "true", Kind.Listed),
         ]

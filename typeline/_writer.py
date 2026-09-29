@@ -1,9 +1,11 @@
 import csv
 from abc import ABC
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
-from csv import DictWriter
 from dataclasses import Field
 from dataclasses import fields as fields_of
+from inspect import Parameter
+from inspect import signature
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -24,7 +26,7 @@ from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
 from ._data_types import RecordType
 from ._data_types import field_types
-from ._data_types import strip_optional
+from ._data_types import find_codec
 from ._data_types import type_name
 from .codecs import NO_CODECS
 from .codecs import Codecs
@@ -80,21 +82,18 @@ class DelimitedDataWriter(
         # Inspect the record type and save the fields and field names.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: tuple[str, ...] = tuple(field.name for field in self._fields)
-        self._header_list: list[str] = list(self._header)  # DictWriter needs a list
         self._field_type_map: dict[str, Any] = field_types(record_type)
-        self._field_codecs: dict[str, FieldCodec[Any]] = {
-            name: codecs[strip_optional(field_type)]
+        self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
+            (name, find_codec(field_type, codecs))
             for name, field_type in self._field_type_map.items()
-            if strip_optional(field_type) in codecs
-        }
+        ]
 
         # Build a JSON encoder for writing values that are not strings once converted to builtins.
         self._encoder: JSONEncoder = JSONEncoder()
 
-        # Build the delimited dictionary writer which will use platform-dependent newlines.
-        self._writer: DictWriter[str] = DictWriter(
+        # Build the delimited writer which will use platform-dependent newlines.
+        self._writer: Any = csv.writer(
             handle,
-            fieldnames=self._header_list,
             delimiter=self.delimiter,
             lineterminator=linesep,
             quotechar='"',
@@ -118,17 +117,18 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _format(self, field_name: str, value: Any) -> str:
+    def _format(self, field_name: str, value: Any, codec: FieldCodec[Any] | None) -> str:
         """Write the value of one field into its text."""
         if value is None:
+            if codec is not None and codec.missing is not None:
+                return codec.missing
             return self._none_field
 
-        codec = self._field_codecs.get(field_name)
         if codec is not None:
             try:
                 return codec.into_text(value)
             except Exception as exception:
-                field_type = type_name(strip_optional(self._field_type_map[field_name]))
+                field_type = type_name(self._field_type_map[field_name])
                 raise ValueError(
                     f"Could not write field '{field_name}' of type {field_type}!"
                 ) from exception
@@ -148,13 +148,13 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        self._writer.writerow({
-            name: self._format(name, getattr(record, name)) for name in self._header
-        })
+        self._writer.writerow([
+            self._format(name, getattr(record, name), codec) for name, codec in self._field_codecs
+        ])
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
-        self._writer.writeheader()
+        self._writer.writerow(self._header)
 
     def close(self) -> None:
         """Close all opened resources."""
@@ -169,12 +169,26 @@ class DelimitedDataWriter(
             path: the path to the file to write delimited data to.
             options: the options of the writer, left at the writer's defaults when not given.
         """
+        _refuse_unknown_options(cls, options)
         handle = Path(path).expanduser().open("w")
         try:
             return cls(handle, **options)
         except BaseException:
             handle.close()
             raise
+
+
+def _refuse_unknown_options(cls: type[Any], options: Mapping[str, Any]) -> None:
+    """Refuse options the writer does not take, before its file is opened and so emptied."""
+    parameters = signature(cls).parameters
+    arguments = signature(cls).bind(None, **options).arguments
+    for name, parameter in parameters.items():
+        if parameter.kind is Parameter.VAR_KEYWORD:
+            unknown = sorted(set(arguments.get(name, {})) - set(WriterOptions.__annotations__))
+            if unknown:
+                raise TypeError(
+                    f"{cls.__name__}() got an unexpected keyword argument '{unknown[0]}'"
+                )
 
 
 class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
