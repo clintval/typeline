@@ -148,7 +148,7 @@ def test_codecs_alias_types_a_mapping_of_different_codecs(tmp_path: Path) -> Non
 
     codecs: Codecs = {Color: COLOR, bool: boolean()}
     path = tmp_path / "test.csv"
-    _ = path.write_text("'1,2,3',Y\n")
+    _ = path.write_text('"1,2,3",Y\n')
 
     with CsvReader.from_path[MyData](path, header=False, codecs=codecs) as reader:
         assert list(reader) == [MyData(Color(1, 2, 3), True)]
@@ -179,7 +179,7 @@ def test_reader_matches_codecs_by_exact_field_type(tmp_path: Path) -> None:
         names: list[str]
 
     path = tmp_path / "test.csv"
-    _ = path.write_text('numbers,names\n1|2,\'["a","b"]\'\n')
+    _ = path.write_text('numbers,names\n1|2,"[""a"",""b""]"\n')
 
     with CsvReader.from_path[MyData](path, codecs={list[int]: delimited(int, sep="|")}) as reader:
         assert list(reader) == [MyData([1, 2], ["a", "b"])]
@@ -207,7 +207,7 @@ def test_reader_uses_a_codec_for_an_optional_field(
 ) -> None:
     """Test that an optional field reads the none field as None and other text with the codec."""
     path = tmp_path / "test.csv"
-    _ = path.write_text("name,color\nfoo,.\nbar,'1,2,3'\n")
+    _ = path.write_text('name,color\nfoo,.\nbar,"1,2,3"\n')
 
     with CsvReader.from_path[record_type](path, codecs={Color: COLOR}, none_field=".") as reader:
         assert list(reader) == [record_type("foo", None), record_type("bar", Color(1, 2, 3))]
@@ -236,7 +236,7 @@ def test_reader_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
         color: Color
 
     path = tmp_path / "test.csv"
-    _ = path.write_text("name,color\nfoo,'1,2,3'\nbar,purple\n")
+    _ = path.write_text('name,color\nfoo,"1,2,3"\nbar,purple\n')
 
     with CsvReader.from_path[MyData](path, codecs={Color: COLOR}) as reader:
         message = r"^Could not read field 'color' of type Color from text 'purple' on line 3!"
@@ -259,7 +259,7 @@ def test_writer_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> No
     with CsvWriter.from_path[MyData](path, codecs=codecs) as writer:
         writer.write(MyData(Color(101, 2, 32), [1, 2, 3], ["a"]))
 
-    assert path.read_text() == "'101,2,32',1|2|3|,[\"a\"]\n"
+    assert path.read_text() == '"101,2,32",1|2|3|,"[""a""]"\n'
 
 
 def test_writer_writes_none_as_the_none_field_before_a_codec(tmp_path: Path) -> None:
@@ -274,7 +274,7 @@ def test_writer_writes_none_as_the_none_field_before_a_codec(tmp_path: Path) -> 
         writer.write(MyData(None))
         writer.write(MyData(Color(1, 2, 3)))
 
-    assert path.read_text() == ".\n'1,2,3'\n"
+    assert path.read_text() == '.\n"1,2,3"\n'
 
 
 def test_writer_passes_nested_custom_types_to_the_enc_hook(tmp_path: Path) -> None:
@@ -288,7 +288,7 @@ def test_writer_passes_nested_custom_types_to_the_enc_hook(tmp_path: Path) -> No
     with CsvWriter.from_path[MyData](path, enc_hook=enc_hook) as writer:
         writer.write(MyData([Interval(1, 2), Interval(3, 4)]))
 
-    assert path.read_text() == "'[[1,2],[3,4]]'\n"
+    assert path.read_text() == '"[[1,2],[3,4]]"\n'
 
 
 def test_writer_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
@@ -344,7 +344,7 @@ def test_codecs_are_found_for_postponed_annotations(tmp_path: Path) -> None:
     with CsvWriter.from_path[PostponedColor](path, codecs={Color: COLOR}) as writer:
         writer.write(PostponedColor(Color(1, 2, 3)))
 
-    assert path.read_text() == "'1,2,3'\n"
+    assert path.read_text() == '"1,2,3"\n'
 
     with CsvReader.from_path[PostponedColor](path, header=False, codecs={Color: COLOR}) as reader:
         assert list(reader) == [PostponedColor(Color(1, 2, 3))]

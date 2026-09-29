@@ -129,7 +129,7 @@ class DelimitedDataReader(
             delimiter=self.delimiter,
             fieldnames=self._header if not header else None,
             lineterminator=linesep,
-            quotechar="'",
+            quotechar='"',
             quoting=csv.QUOTE_MINIMAL,
         )
 

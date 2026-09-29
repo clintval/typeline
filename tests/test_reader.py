@@ -83,7 +83,7 @@ def test_reader_will_escape_text_when_delimiter_is_used(tmp_path: Path) -> None:
     with TsvWriter.from_path[SimpleMetric](tmp_path / "test.txt") as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write(metric)
-    assert (tmp_path / "test.txt").read_text() == "1\t'my\tname'\t0.2\n"
+    assert (tmp_path / "test.txt").read_text() == '1\t"my\tname"\t0.2\n'
 
     with TsvReader.from_path[SimpleMetric](tmp_path / "test.txt", header=False) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="my\tname", field3=0.2)]
@@ -114,15 +114,15 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
 
     expected: str = (
         "1"
-        + "\t'my\tname'"
+        + '\t"my\tname"'
         + "\t0.2"
         + "\t[1,2,3]"
         + "\t[3,4,5]"
         + "\t[5,6,7]"
-        + '\t{"field1":1,"field2":2}'
-        + '\t{"field1":10,"field2":"hi-mom","field3":null}'
-        + '\t{"first":{"field1":2,"field2":"hi-dad","field3":0.2}'
-        + ',"second":{"field1":3,"field2":"hi-all","field3":0.3}}'
+        + '\t"{""field1"":1,""field2"":2}"'
+        + '\t"{""field1"":10,""field2"":""hi-mom"",""field3"":null}"'
+        + '\t"{""first"":{""field1"":2,""field2"":""hi-dad"",""field3"":0.2}'
+        + ',""second"":{""field1"":3,""field2"":""hi-all"",""field3"":0.3}}"'
         + "\ttrue"
         + "\t"
         + "\t0.2\n"
@@ -283,7 +283,7 @@ def test_reader_can_read_with_a_field_codec(tmp_path: Path) -> None:
         field1: float
         field2: list[int]
 
-    (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1|2|3|'\n")
+    (tmp_path / "test.txt").write_text("field1,field2\n0.1,1|2|3|\n")
 
     codecs = {list[int]: delimited(int, sep="|", trailing_sep=True)}
     with CsvReader.from_path[MyMetric](tmp_path / "test.txt", codecs=codecs) as reader:
@@ -324,7 +324,7 @@ def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:
         field3: Optional[str]
         field4: Optional[list[int]]
 
-    (tmp_path / "test.txt").write_text("0.1,1,hello,\n0.2,,,'[1,2,3]'\n")
+    (tmp_path / "test.txt").write_text('0.1,1,hello,\n0.2,,,"[1,2,3]"\n')
 
     with CsvReader.from_path[MyMetric](tmp_path / "test.txt", header=False) as reader:
         record1, record2 = list(iter(reader))
@@ -355,7 +355,7 @@ class TextFields:
         pytest.param(",", TextFields("", None), id="empty"),
         pytest.param("null,null", TextFields("null", "null"), id="null"),
         pytest.param("true,false", TextFields("true", "false"), id="booleans"),
-        pytest.param("'[1]','{2}'", TextFields("[1]", "{2}"), id="json-looking"),
+        pytest.param("[1],{2}", TextFields("[1]", "{2}"), id="json-looking"),
     ],
 )
 def test_reader_keeps_text_in_str_fields(tmp_path: Path, line: str, expected: TextFields) -> None:
@@ -364,3 +364,25 @@ def test_reader_keeps_text_in_str_fields(tmp_path: Path, line: str, expected: Te
 
     with CsvReader.from_path[TextFields](tmp_path / "test.csv") as reader:
         assert list(reader) == [expected]
+
+
+@dataclass
+class Contact:
+    """A record with free text that can hold delimiters and quotes."""
+
+    name: str
+    notes: str
+    tags: list[str]
+
+
+def test_reader_reads_standard_csv_quoting(tmp_path: Path) -> None:
+    """Test that the reader reads fields quoted with double quotes, as other CSV tools write."""
+    (tmp_path / "test.csv").write_text(
+        'name,notes,tags\n"Doe, Jane","said ""hi""","[""a"",""b""]"\nO\'Brien,it\'s fine,[]\n'
+    )
+
+    with CsvReader.from_path[Contact](tmp_path / "test.csv") as reader:
+        assert list(reader) == [
+            Contact("Doe, Jane", 'said "hi"', ["a", "b"]),
+            Contact("O'Brien", "it's fine", []),
+        ]

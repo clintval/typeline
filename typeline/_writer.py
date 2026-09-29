@@ -97,7 +97,7 @@ class DelimitedDataWriter(
             fieldnames=self._header_list,
             delimiter=self.delimiter,
             lineterminator=linesep,
-            quotechar="'",
+            quotechar='"',
             quoting=csv.QUOTE_MINIMAL,
         )
 

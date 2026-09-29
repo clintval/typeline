@@ -115,7 +115,7 @@ def test_transcript_table_stores_structured_fields_as_json(tmp_path: Path) -> No
         writer.write(transcript)
 
     assert (tmp_path / "transcripts.csv").read_text() == (
-        'TP53-201,-,\'[{"start":1,"end":5},{"start":9,"end":12}]\',{"mane":1},["p53"]\n'
+        'TP53-201,-,"[{""start"":1,""end"":5},{""start"":9,""end"":12}]","{""mane"":1}","[""p53""]"\n'
     )
 
     with CsvReader.from_path[Transcript](tmp_path / "transcripts.csv", header=False) as reader:
@@ -208,7 +208,7 @@ def test_capture_targets_use_hooks_for_nested_custom_types(tmp_path: Path) -> No
     ) as writer:
         writer.write(target)
 
-    assert (tmp_path / "targets.tsv").read_text() == 'BRCA1\t[[1,9]]\t{"e1":[1,4]}\n'
+    assert (tmp_path / "targets.tsv").read_text() == 'BRCA1\t[[1,9]]\t"{""e1"":[1,4]}"\n'
 
     with TsvReader.from_path[CaptureTarget](
         tmp_path / "targets.tsv", header=False, dec_hook=decode_interval
