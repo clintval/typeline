@@ -124,7 +124,7 @@ def test_reader_will_write_a_complicated_record(tmp_path: Path) -> None:
         + '\t{"first":{"field1":2,"field2":"hi-dad","field3":0.2}'
         + ',"second":{"field1":3,"field2":"hi-all","field3":0.3}}'
         + "\ttrue"
-        + "\tnull"
+        + "\t"
         + "\t0.2\n"
     )
     assert (tmp_path / "test.txt").read_text() == expected
@@ -353,7 +353,7 @@ class TextFields:
     "line,expected",
     [
         pytest.param(",", TextFields("", None), id="empty"),
-        pytest.param("null,null", TextFields("null", None), id="null"),
+        pytest.param("null,null", TextFields("null", "null"), id="null"),
         pytest.param("true,false", TextFields("true", "false"), id="booleans"),
         pytest.param("'[1]','{2}'", TextFields("[1]", "{2}"), id="json-looking"),
     ],

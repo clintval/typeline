@@ -268,7 +268,7 @@ def test_codecs_round_trip_through_a_file(tmp_path: Path) -> None:
         for record in records:
             writer.write(record)
 
-    with CsvReader.from_path[MyData](path, codecs=codecs, none_field="null") as reader:
+    with CsvReader.from_path[MyData](path, codecs=codecs) as reader:
         assert list(reader) == records
 
 

@@ -108,7 +108,7 @@ def test_writer_will_write_a_complicated_record(tmp_path: Path) -> None:
         + '\t{"first":{"field1":2,"field2":"hi-dad","field3":0.2}'
         + ',"second":{"field1":3,"field2":"hi-all","field3":0.3}}'
         + "\ttrue"
-        + "\tnull"
+        + "\t"
         + "\t0.2\n"
     )
     assert (tmp_path / "test.txt").read_text() == expected
@@ -156,7 +156,7 @@ def test_writer_can_write_old_style_optional_types(tmp_path: Path) -> None:
         writer.write(MyMetric(0.1, 1, None))
         writer.write(MyMetric(0.2, None, [1, 2, 3]))
 
-    assert (tmp_path / "test.txt").read_text() == "0.1,1,null\n0.2,null,'[1,2,3]'\n"
+    assert (tmp_path / "test.txt").read_text() == "0.1,1,\n0.2,,'[1,2,3]'\n"
 
 
 def test_writer_keeps_quotes_that_are_part_of_a_string(tmp_path: Path) -> None:
@@ -176,7 +176,7 @@ def test_writer_keeps_quotes_that_are_part_of_a_string(tmp_path: Path) -> None:
         assert list(reader) == [MyMetric('"quoted"', ['a"b'])]
 
 
-@pytest.mark.parametrize("none_field,expected", [("null", "null"), ("", ""), ("NA", "NA")])
+@pytest.mark.parametrize("none_field,expected", [("", ""), ("null", "null"), ("NA", "NA")])
 def test_writer_writes_none_as_the_none_field(
     tmp_path: Path, none_field: str, expected: str
 ) -> None:
@@ -191,3 +191,21 @@ def test_writer_writes_none_as_the_none_field(
         writer.write(MyMetric(None, 1))
 
     assert (tmp_path / "test.txt").read_text() == f"{expected},1\n"
+
+
+def test_writer_and_reader_round_trip_none_with_their_defaults(tmp_path: Path) -> None:
+    """Test that None is written as an empty field by default and read back as None."""
+
+    @dataclass
+    class MyMetric:
+        name: str | None
+        count: int | None
+        values: list[int] | None
+
+    with CsvWriter.from_path(tmp_path / "test.txt", MyMetric) as writer:
+        writer.write(MyMetric(None, None, None))
+
+    assert (tmp_path / "test.txt").read_text() == ",,\n"
+
+    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", header=False) as reader:
+        assert list(reader) == [MyMetric(None, None, None)]

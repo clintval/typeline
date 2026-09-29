@@ -58,7 +58,7 @@ class DelimitedDataWriter(
         record_type: type[RecordType],
         /,
         *,
-        none_field: str = "null",
+        none_field: str = "",
         codecs: Mapping[Any, FieldCodec[Any]] = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
     ) -> None:

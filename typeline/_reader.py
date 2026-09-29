@@ -330,7 +330,7 @@ class DelimitedDataReader(
                 ) from exception
 
         if field_name in self._text_fields:
-            return None if value == "null" and field_name in self._optional_fields else value
+            return value
 
         stripped = value.strip()
         if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
