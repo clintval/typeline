@@ -38,6 +38,8 @@ from typing_extensions import Unpack
 from typing_extensions import override
 
 from ._data_types import RecordType
+from ._data_types import accepts_none
+from ._data_types import field_types
 from ._data_types import strip_optional
 from ._data_types import type_name
 from .codecs import NO_CODECS
@@ -215,11 +217,19 @@ class DelimitedDataReader(
         # Inspect the record type and save the fields, field names, and field types.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in self._fields]
-        self._field_type_map: dict[str, type | Any | str] = {f.name: f.type for f in self._fields}
+        self._field_type_map: dict[str, Any] = field_types(record_type)
         self._field_codecs: dict[str, FieldCodec[Any]] = {
-            field.name: codecs[strip_optional(field.type)]
-            for field in self._fields
-            if strip_optional(field.type) in codecs
+            name: codecs[strip_optional(field_type)]
+            for name, field_type in self._field_type_map.items()
+            if strip_optional(field_type) in codecs
+        }
+        self._optional_fields: set[str] = {
+            name for name, field_type in self._field_type_map.items() if accepts_none(field_type)
+        }
+        self._text_fields: set[str] = {
+            name
+            for name, field_type in self._field_type_map.items()
+            if strip_optional(field_type) is str
         }
 
         # Build the delimited dictionary reader, filtering out any comment lines along the way.
@@ -303,8 +313,10 @@ class DelimitedDataReader(
 
     def _preprocess(self, field_name: str, value: Any) -> Any:
         """Read the text of one field into a value ready for conversion into the record type."""
-        if value == self._none_field or not isinstance(value, str):
-            return None if value == self._none_field else value
+        if not isinstance(value, str):
+            return value
+        if value == self._none_field and field_name in self._optional_fields:
+            return None
 
         codec = self._field_codecs.get(field_name)
         if codec is not None:
@@ -316,6 +328,9 @@ class DelimitedDataReader(
                     f"Could not read field '{field_name}' of type {field_type} from text"
                     + f" '{value}' on line {self._line_count}!"
                 ) from exception
+
+        if field_name in self._text_fields:
+            return None if value == "null" and field_name in self._optional_fields else value
 
         stripped = value.strip()
         if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):

@@ -22,6 +22,7 @@ from typing_extensions import Unpack
 from typing_extensions import override
 
 from ._data_types import RecordType
+from ._data_types import field_types
 from ._data_types import strip_optional
 from ._data_types import type_name
 from .codecs import NO_CODECS
@@ -83,11 +84,11 @@ class DelimitedDataWriter(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: tuple[str, ...] = tuple(field.name for field in self._fields)
         self._header_list: list[str] = list(self._header)  # DictWriter needs a list
-        self._field_type_map: dict[str, type | Any | str] = {f.name: f.type for f in self._fields}
+        self._field_type_map: dict[str, Any] = field_types(record_type)
         self._field_codecs: dict[str, FieldCodec[Any]] = {
-            field.name: codecs[strip_optional(field.type)]
-            for field in self._fields
-            if strip_optional(field.type) in codecs
+            name: codecs[strip_optional(field_type)]
+            for name, field_type in self._field_type_map.items()
+            if strip_optional(field_type) in codecs
         }
 
         # Build a JSON encoder for writing values that are not strings once converted to builtins.

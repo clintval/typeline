@@ -270,3 +270,22 @@ def test_codecs_round_trip_through_a_file(tmp_path: Path) -> None:
 
     with CsvReader.from_path[MyData](path, codecs=codecs, none_field="null") as reader:
         assert list(reader) == records
+
+
+@dataclass
+class PostponedColor:
+    """A record whose field annotation is a string, as with postponed annotations."""
+
+    color: "Color | None"  # noqa: UP037
+
+
+def test_codecs_are_found_for_postponed_annotations(tmp_path: Path) -> None:
+    """Test that codecs are found for fields whose annotations are strings."""
+    path = tmp_path / "test.csv"
+    with CsvWriter.from_path(path, PostponedColor, codecs={Color: COLOR}) as writer:
+        writer.write(PostponedColor(Color(1, 2, 3)))
+
+    assert path.read_text() == "'1,2,3'\n"
+
+    with CsvReader.from_path[PostponedColor](path, header=False, codecs={Color: COLOR}) as reader:
+        assert list(reader) == [PostponedColor(Color(1, 2, 3))]

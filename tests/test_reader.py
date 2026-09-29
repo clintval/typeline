@@ -339,3 +339,28 @@ def test_reader_should_be_usable_right_after_file_handle_open(tmp_path: Path) ->
 
     with open(tmp_path / "test.txt", "r") as handle, CsvReader[SimpleMetric](handle) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2="name", field3=None)]
+
+
+@dataclass
+class TextFields:
+    """A record with a required and an optional text field."""
+
+    required: str
+    optional: str | None
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        pytest.param(",", TextFields("", None), id="empty"),
+        pytest.param("null,null", TextFields("null", None), id="null"),
+        pytest.param("true,false", TextFields("true", "false"), id="booleans"),
+        pytest.param("'[1]','{2}'", TextFields("[1]", "{2}"), id="json-looking"),
+    ],
+)
+def test_reader_keeps_text_in_str_fields(tmp_path: Path, line: str, expected: TextFields) -> None:
+    """Test that text fields are not parsed as JSON, and are only None when optional."""
+    (tmp_path / "test.csv").write_text(f"required,optional\n{line}\n")
+
+    with CsvReader.from_path[TextFields](tmp_path / "test.csv") as reader:
+        assert list(reader) == [expected]
