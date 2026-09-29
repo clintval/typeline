@@ -199,3 +199,28 @@ def test_writer_and_reader_round_trip_none_with_their_defaults(tmp_path: Path) -
 
     with CsvReader.from_path[MyMetric](tmp_path / "test.txt", header=False) as reader:
         assert list(reader) == [MyMetric(None, None, None)]
+
+
+def test_empty_text_reads_back_as_none_only_in_optional_text_fields(tmp_path: Path) -> None:
+    """Test that an empty field is None when the field allows None, and "" when it is a str."""
+
+    @dataclass
+    class MyMetric:
+        required: str
+        optional: str | None
+
+    with CsvWriter.from_path[MyMetric](tmp_path / "test.txt") as writer:
+        writer.write(MyMetric("", ""))
+        writer.write(MyMetric("", None))
+
+    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", header=False) as reader:
+        assert list(reader) == [MyMetric("", None), MyMetric("", None)]
+
+    with CsvWriter.from_path[MyMetric](tmp_path / "test.txt", none_field="NA") as writer:
+        writer.write(MyMetric("", ""))
+        writer.write(MyMetric("", None))
+
+    with CsvReader.from_path[MyMetric](
+        tmp_path / "test.txt", header=False, none_field="NA"
+    ) as reader:
+        assert list(reader) == [MyMetric("", ""), MyMetric("", None)]

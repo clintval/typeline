@@ -63,6 +63,11 @@ MyData(field1=20, field2='test2', field3=None)
 
 ```
 
+### Missing Values
+
+`None` is written as an empty field. When read, an empty field is `None` if the field allows `None`, and `""` if it is a `str`.
+Set `none_field`, e.g. to `"NA"`, when an optional text field must tell `""` and `None` apart.
+
 ### Any Text Stream
 
 Subscript the class instead of `from_path` to read or write any open text stream.

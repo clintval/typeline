@@ -53,7 +53,7 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     """Skip lines that have any of these string prefixes."""
 
     none_field: str
-    """The string that is used in place of None for a field."""
+    """The text read as None in fields that allow None; a `str` field keeps it as text."""
 
     codecs: Codecs
     """How to read a field from its text, by the field's type."""
