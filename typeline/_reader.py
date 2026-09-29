@@ -3,7 +3,6 @@ from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from csv import DictReader
 from dataclasses import Field
 from dataclasses import fields as fields_of
 from os import linesep
@@ -103,7 +102,7 @@ class DelimitedDataReader(
         self._handle: TextIO = handle
         self._line_count: int = 0
         self._record_type: type[RecordType] = record_type
-        self._comment_prefixes: Collection[str] = set(comment_prefixes)
+        self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
         self._on_comment: Callable[[Comment], None] | None = on_comment
@@ -111,35 +110,27 @@ class DelimitedDataReader(
         # Build a JSON decoder for parsing string values into Python objects
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
 
-        # Inspect the record type and save the fields, field names, and field types.
+        # Inspect the record type, and decide once how each field is read from its text.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in self._fields]
         self._field_type_map: dict[str, Any] = field_types(record_type)
-        self._field_codecs: dict[str, FieldCodec[Any]] = {
-            name: codec
+        self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
+            (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
-            if (codec := find_codec(field_type, codecs)) is not None
-        }
-        self._optional_fields: set[str] = {
-            name for name, field_type in self._field_type_map.items() if accepts_none(field_type)
-        }
-        self._text_fields: set[str] = {
-            name for name, field_type in self._field_type_map.items() if is_text(field_type)
-        }
+        ]
 
-        # Build the delimited dictionary reader, filtering out any comment lines along the way.
-        self._reader: DictReader[Any] = DictReader(
+        # Read rows as lists, filtering out any comment lines along the way.
+        self._rows: Iterator[list[str]] = csv.reader(
             self._filter_out_comments(handle),
             delimiter=self.delimiter,
-            fieldnames=self._header if not header else None,
             lineterminator=linesep,
             quotechar='"',
             quoting=csv.QUOTE_MINIMAL,
         )
 
         # Protect the user from the case where a header was specified, but a data line was found!
-        if self._reader.fieldnames is not None and self._reader.fieldnames != self._header:
-            found: list[str] = list(self._reader.fieldnames)
+        found: list[str] | None = next(self._rows, None) if header else None
+        if found is not None and found != self._header:
             missing: list[str] = [name for name in self._header if name not in found]
             unexpected: list[str] = [name for name in found if name not in self._header]
             raise ValueError(
@@ -170,47 +161,59 @@ class DelimitedDataReader(
 
     def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
         """Yield only lines in an iterator that do not start with a comment prefix."""
+        prefixes = self._comment_prefixes
         for line in lines:
             self._line_count += 1
-            if not line or not (stripped := line.strip()):
+            stripped = line.strip()
+            if not stripped:
                 continue
-            elif any(stripped.startswith(prefix) for prefix in self._comment_prefixes):
+            if prefixes and stripped.startswith(prefixes):
                 if self._on_comment is not None:
                     self._on_comment(Comment(self._line_count, line.rstrip("\r\n")))
                 continue
             yield line
 
-    def _preprocess(self, field_name: str, value: Any) -> Any:
-        """Read the text of one field into a value ready for conversion into the record type."""
-        if not isinstance(value, str):
-            return value
-        if value == self._none_field and field_name in self._optional_fields:
-            return None
+    def _field_reader(
+        self, name: str, field_type: Any, codec: FieldCodec[Any] | None
+    ) -> Callable[[str], Any] | None:
+        """Decide how a field is read from its text, or return None to keep the text as-is."""
+        none_field = self._none_field if accepts_none(field_type) else None
 
-        codec = self._field_codecs.get(field_name)
         if codec is not None:
-            if codec.missing is not None and value == codec.missing:
+            missing = codec.missing
+
+            def read_with_codec(text: str) -> Any:
+                if text == none_field or text == missing:
+                    return None
+                try:
+                    return codec.from_text(text)
+                except Exception as exception:
+                    raise ValueError(
+                        f"Could not read field '{name}' of type {type_name(field_type)} from text"
+                        + f" '{text}' on line {self._line_count}!"
+                    ) from exception
+
+            return read_with_codec
+
+        if is_text(field_type):
+            if none_field is None:
                 return None
-            try:
-                return codec.from_text(value)
-            except Exception as exception:
-                field_type = type_name(self._field_type_map[field_name])
-                raise ValueError(
-                    f"Could not read field '{field_name}' of type {field_type} from text"
-                    + f" '{value}' on line {self._line_count}!"
-                ) from exception
+            return lambda text: None if text == none_field else text
 
-        if field_name in self._text_fields:
-            return value
+        decode = self._json_decoder.decode
 
-        stripped = value.strip()
-        if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
-            try:
-                parsed: Any = self._json_decoder.decode(value.encode("utf-8"))
-                return parsed
-            except DecodeError:
-                return value
-        return value
+        def read_as_json(text: str) -> Any:
+            if text == none_field:
+                return None
+            stripped = text.strip()
+            if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
+                try:
+                    return decode(text.encode("utf-8"))
+                except DecodeError:
+                    return text
+            return text
+
+        return read_as_json
 
     def _convert_hook(self, type_: Any, obj: Any) -> Any:
         """Pass through values a codec already built, and hand other custom types to dec_hook."""
@@ -223,17 +226,18 @@ class DelimitedDataReader(
     @override
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
-        for record in self._reader:
-            if None in record or None in record.values():
-                row: dict[Any, Any] = record  # DictReader keys overflow under None
-                extra: list[str] = row.get(None, [])
-                present: int = sum(v is not None for k, v in row.items() if k is not None)
-                found: int = present + len(extra)
+        width = len(self._header)
+        field_readers = self._field_readers
+        for row in self._rows:
+            if len(row) != width:
                 raise ValueError(
-                    f"Expected {len(self._header)} fields but found {found} on line"
+                    f"Expected {width} fields but found {len(row)} on line"
                     + f" {self._line_count} for record type: {self._record_type.__name__}."
                 )
-            preprocessed = {key: self._preprocess(key, value) for key, value in record.items()}
+            preprocessed = {
+                name: text if read is None else read(text)
+                for (name, read), text in zip(field_readers, row, strict=True)
+            }
             try:
                 yield convert(
                     preprocessed,
