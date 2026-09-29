@@ -7,7 +7,7 @@ license = "MIT"
 readme = "README.md"
 keywords = ["dataclass", "IO", "delimited-data", "CSV", "TSV", "msgspec"]
 include = ["CONTRIBUTING.md", "LICENSE"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "msgspec>=0.19",
     "typing-extensions>=4.12"
@@ -21,10 +21,10 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: File Formats",
     "Topic :: Software Development :: Documentation",
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -142,7 +142,7 @@ reportImportCycles = false
 failOnWarnings = false
 reportAny = false
 reportExplicitAny = false
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 
 [tool.ty.analysis]
 respect-type-ignore-comments = false
@@ -153,7 +153,7 @@ unused-ignore-comment = "error"
 [tool.ruff]
 include        = ["typeline/**", "tests/**"]
 line-length    = 100
-target-version = "py310"
+target-version = "py311"
 output-format  = "full"
 preview        = true
 
