@@ -87,7 +87,17 @@ class DelimitedDataReader(
 
         # Protect the user from the case where a header was specified, but a data line was found!
         if self._reader.fieldnames is not None and self._reader.fieldnames != self._header:
-            raise ValueError("Fields of header do not match fields of dataclass!")
+            found: list[str] = list(self._reader.fieldnames)
+            missing: list[str] = [name for name in self._header if name not in found]
+            unexpected: list[str] = [name for name in found if name not in self._header]
+            raise ValueError(
+                "Fields of header do not match fields of dataclass!"
+                + f" Header: {found}."
+                + f" Fields of {record_type.__name__}: {self._header}."
+                + (f" Missing from header: {missing}." if missing else "")
+                + (f" Unexpected in header: {unexpected}." if unexpected else "")
+                + ("" if missing or unexpected else " The fields are out of order.")
+            )
 
     @property
     @abstractmethod

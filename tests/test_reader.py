@@ -177,6 +177,41 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
         ]
 
 
+@pytest.mark.parametrize(
+    "header,detail",
+    [
+        pytest.param(
+            "field1\tfield2",
+            "Header: ['field1', 'field2']. Fields of SimpleMetric: ['field1', 'field2', 'field3']."
+            + " Missing from header: ['field3'].",
+            id="missing",
+        ),
+        pytest.param(
+            "field1\tfield2\tfield3\tfield4",
+            "Unexpected in header: ['field4'].",
+            id="unexpected",
+        ),
+        pytest.param(
+            "field1\tfield2\tfield4",
+            "Missing from header: ['field3']. Unexpected in header: ['field4'].",
+            id="missing-and-unexpected",
+        ),
+        pytest.param("field3\tfield2\tfield1", "The fields are out of order.", id="out-of-order"),
+    ],
+)
+def test_reader_names_how_the_header_differs_from_the_dataclass(
+    tmp_path: Path, header: str, detail: str
+) -> None:
+    """Test the header mismatch error shows both headers and how they differ."""
+    (tmp_path / "test.txt").write_text(f"{header}\n")
+
+    with pytest.raises(ValueError) as exception:
+        TsvReader.from_path(tmp_path / "test.txt", SimpleMetric)
+
+    assert str(exception.value).startswith("Fields of header do not match fields of dataclass!")
+    assert detail in str(exception.value)
+
+
 def test_reader_raises_exception_for_missing_fields(tmp_path: Path) -> None:
     """Test the reader raises an exception for missing fields."""
     (tmp_path / "test.txt").write_text(
