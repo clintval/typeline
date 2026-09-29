@@ -3,6 +3,7 @@ from abc import ABC
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from csv import DictReader
 from dataclasses import Field
@@ -37,6 +38,10 @@ from typing_extensions import Unpack
 from typing_extensions import override
 
 from ._data_types import RecordType
+from ._data_types import strip_optional
+from ._data_types import type_name
+from .codecs import NO_CODECS
+from .codecs import FieldCodec
 
 DEFAULT_COMMENT_PREFIXES: set[str] = set()
 """The default line prefixes that will tell the reader to skip those lines."""
@@ -60,8 +65,11 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     none_field: str
     """The string that is used in place of None for a field."""
 
+    codecs: Mapping[Any, FieldCodec[Any]]
+    """How to read a field from its text, by the field's type."""
+
     dec_hook: Callable[[type, Any], Any] | None
-    """A custom decoder hook for the JSON decoder."""
+    """Decode custom types anywhere in a record, with the semantics of msgspec's `dec_hook`."""
 
 
 OwnerType = TypeVar("OwnerType", covariant=True)
@@ -175,6 +183,7 @@ class DelimitedDataReader(
         header: bool = True,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
         none_field: str = "",
+        codecs: Mapping[Any, FieldCodec[Any]] = NO_CODECS,
         dec_hook: Callable[[type, Any], Any] | None = None,
     ):
         """Instantiate a new delimited data reader.
@@ -184,7 +193,8 @@ class DelimitedDataReader(
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
             none_field: the string that is used in place of None for a field.
-            dec_hook: a custom decoder hook for the JSON decoder.
+            codecs: how to read a field from its text, by the field's type.
+            dec_hook: decode custom types anywhere in a record, like msgspec's `dec_hook`.
         """
         if self._parameterized_record_type is None:
             name = type(self).__name__
@@ -205,8 +215,12 @@ class DelimitedDataReader(
         # Inspect the record type and save the fields, field names, and field types.
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: list[str] = [field.name for field in self._fields]
-        self._field_types: list[type | Any | str] = [field.type for field in self._fields]
         self._field_type_map: dict[str, type | Any | str] = {f.name: f.type for f in self._fields}
+        self._field_codecs: dict[str, FieldCodec[Any]] = {
+            field.name: codecs[strip_optional(field.type)]
+            for field in self._fields
+            if strip_optional(field.type) in codecs
+        }
 
         # Build the delimited dictionary reader, filtering out any comment lines along the way.
         self._reader: DictReader[Any] = DictReader(
@@ -260,28 +274,6 @@ class DelimitedDataReader(
             )
         return _PARAMETERIZED_READERS[key]
 
-    def with_decoder(self, dec_hook: Callable[[type, Any], Any]) -> Self:
-        """Chain an additional decoder hook.
-
-        This allows building up multiple transformations::
-
-            reader = (CsvReader.from_path[MyData]("data.csv")
-                .with_decoder(custom_decoder_1)
-                .with_decoder(custom_decoder_2))
-
-        Args:
-            dec_hook: A function that takes (field_type, value) and returns the decoded value.
-
-        Returns:
-            Self for method chaining.
-        """
-        old_hook = self._dec_hook
-        if old_hook is None:
-            self._dec_hook = dec_hook
-        else:
-            self._dec_hook = lambda typ, val: old_hook(typ, dec_hook(typ, val))
-        return self
-
     @override
     def __enter__(self) -> Self:
         """Enter this context."""
@@ -309,69 +301,38 @@ class DelimitedDataReader(
                 continue
             yield line
 
-    def _decode(self, field_type: type[Any] | str | Any, item: Any) -> Any:
-        """Decode a field value before parsing.
-
-        This method can be overridden in subclasses to provide custom decoding logic
-        for specific types. The method receives the field type and the raw string value,
-        and should return a value that can be parsed by msgspec (typically a string in
-        JSON format for complex types, or the value itself for simple types).
-
-        Args:
-            field_type: The type annotation for this field.
-            item: The raw value read from the delimited file.
-
-        Returns:
-            A value ready for msgspec to parse (often a JSON-formatted string).
-
-        Example:
-            >>> def _decode(self, field_type, item):
-            ...     # Convert comma-separated to JSON array format
-            ...     if get_origin(field_type) is list:
-            ...         return f"[{item.replace(',', ',')}]"
-            ...     return item
-        """
-        if self._dec_hook is not None:
-            return self._dec_hook(field_type, item)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
-        return item
-
     def _preprocess(self, field_name: str, value: Any) -> Any:
-        """Preprocess a field value using two-phase parsing.
+        """Read the text of one field into a value ready for conversion into the record type."""
+        if value == self._none_field or not isinstance(value, str):
+            return None if value == self._none_field else value
 
-        Phase 1: Transform the raw string using _decode() to make it parseable.
-        Phase 2: Parse JSON-like strings into Python objects.
+        codec = self._field_codecs.get(field_name)
+        if codec is not None:
+            try:
+                return codec.from_text(value)
+            except Exception as exception:
+                field_type = type_name(strip_optional(self._field_type_map[field_name]))
+                raise ValueError(
+                    f"Could not read field '{field_name}' of type {field_type} from text"
+                    + f" '{value}' on line {self._line_count}!"
+                ) from exception
 
-        This allows subclasses to override _decode() to handle custom types and formats
-        while keeping the JSON parsing logic consistent.
-
-        Args:
-            field_name: The name of the field being processed.
-            value: The raw value read from the delimited file.
-
-        Returns:
-            A Python object ready for msgspec.convert().
-        """
-        if value == self._none_field:
-            return None
-
-        if isinstance(value, str):
-            field_type = self._field_type_map.get(field_name, Any)
-            processed_value = self._decode(field_type, value)
-
-            if isinstance(processed_value, str):
-                stripped = processed_value.strip()
-                if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
-                    try:
-                        parsed: Any = self._json_decoder.decode(processed_value.encode("utf-8"))
-                        return parsed
-                    except DecodeError:
-                        return processed_value
-                else:
-                    return processed_value
-            else:
-                return processed_value
-
+        stripped = value.strip()
+        if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
+            try:
+                parsed: Any = self._json_decoder.decode(value.encode("utf-8"))
+                return parsed
+            except DecodeError:
+                return value
         return value
+
+    def _convert_hook(self, type_: Any, obj: Any) -> Any:
+        """Pass through values a codec already built, and hand other custom types to dec_hook."""
+        if isinstance(type_, type) and isinstance(obj, type_):
+            return obj
+        if self._dec_hook is not None:
+            return self._dec_hook(type_, obj)
+        raise NotImplementedError(f"No dec_hook to convert into {type_name(type_)}.")
 
     @override
     def __iter__(self) -> Iterator[RecordType]:
@@ -393,6 +354,7 @@ class DelimitedDataReader(
                     self._record_type,
                     strict=False,
                     str_keys=True,
+                    dec_hook=self._convert_hook,
                 )
             except ValidationError as exception:
                 raise ValidationError(

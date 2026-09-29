@@ -63,6 +63,30 @@ MyData(field1=20, field2='test2', field3=None)
 
 ```
 
+### Custom Field Formats
+
+A `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
+Custom types nested inside a field are handled by `dec_hook` and `enc_hook`, as in msgspec.
+
+```pycon
+>>> from typeline.codecs import delimited
+>>>
+>>> @dataclass
+... class Feature:
+...     name: str
+...     blocks: list[int]
+>>>
+>>> codecs = {list[int]: delimited(int, trailing_sep=True)}
+>>>
+>>> with TsvWriter.from_path(temp_file.name, Feature, codecs=codecs) as writer:
+...     writer.write(Feature("exon", [1, 2, 3]))
+>>>
+>>> with TsvReader.from_path[Feature](temp_file.name, header=False, codecs=codecs) as reader:
+...     print(list(reader))
+[Feature(name='exon', blocks=[1, 2, 3])]
+
+```
+
 ## Development and Testing
 
 See the [contributing guide](./CONTRIBUTING.md) for more information.

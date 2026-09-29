@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 from typing import Optional
-from typing import get_origin
 
 import pytest
 from msgspec import ValidationError
@@ -11,6 +9,7 @@ from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import TsvReader
 from typeline import TsvWriter
+from typeline.codecs import delimited
 
 from .conftest import ComplexMetric
 from .conftest import SimpleMetric
@@ -276,8 +275,8 @@ def test_reader_can_read_empty_file_ok(tmp_path: Path) -> None:
         assert list(reader) == []
 
 
-def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
-    """Test we can implement a reader with a custom decode callback."""
+def test_reader_can_read_with_a_field_codec(tmp_path: Path) -> None:
+    """Test we can read a field in a custom text format with a codec for its type."""
 
     @dataclass
     class MyMetric:
@@ -286,14 +285,8 @@ def test_reader_can_read_with_a_custom_callback(tmp_path: Path) -> None:
 
     (tmp_path / "test.txt").write_text("field1,field2\n0.1,'1|2|3|'\n")
 
-    def dec_hook(field_type: type, item: Any) -> Any:
-        """A callback for overriding the decoding of builtin types and custom types."""
-        if get_origin(field_type) is list:
-            stripped: str = item.rstrip("|")
-            return f"[{stripped.translate(str.maketrans('|', ','))}]"
-        return item
-
-    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", dec_hook=dec_hook) as reader:
+    codecs = {list[int]: delimited(int, sep="|", trailing_sep=True)}
+    with CsvReader.from_path[MyMetric](tmp_path / "test.txt", codecs=codecs) as reader:
         assert list(reader) == [MyMetric(0.1, [1, 2, 3])]
 
 

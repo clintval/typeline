@@ -1,5 +1,6 @@
 import csv
 from abc import ABC
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from csv import DictWriter
 from dataclasses import Field
@@ -16,9 +17,28 @@ from typing import Generic
 from msgspec import to_builtins
 from msgspec.json import Encoder as JSONEncoder
 from typing_extensions import Self
+from typing_extensions import TypedDict
+from typing_extensions import Unpack
 from typing_extensions import override
 
 from ._data_types import RecordType
+from ._data_types import strip_optional
+from ._data_types import type_name
+from .codecs import NO_CODECS
+from .codecs import FieldCodec
+
+
+class WriterOptions(TypedDict, total=False, closed=True):
+    """The options of a delimited data writer."""
+
+    none_field: str
+    """The string that is used in place of None for a field."""
+
+    codecs: Mapping[Any, FieldCodec[Any]]
+    """How to write a field into its text, by the field's type."""
+
+    enc_hook: Callable[[Any], Any] | None
+    """Encode custom types anywhere in a record, with the semantics of msgspec's `enc_hook`."""
 
 
 class DelimitedDataWriter(
@@ -36,7 +56,9 @@ class DelimitedDataWriter(
         handle: TextIOWrapper,
         record_type: type[RecordType],
         /,
+        *,
         none_field: str = "null",
+        codecs: Mapping[Any, FieldCodec[Any]] = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
     ) -> None:
         """Instantiate a new delimited record writer.
@@ -45,7 +67,8 @@ class DelimitedDataWriter(
             handle: a file-like object to write delimited data to.
             record_type: the type of the object we will be writing.
             none_field: the string that is used in place of None for a field.
-            enc_hook: a custom encoder hook for converting values to builtin types.
+            codecs: how to write a field into its text, by the field's type.
+            enc_hook: encode custom types anywhere in a record, like msgspec's `enc_hook`.
         """
         if not is_dataclass(record_type):
             raise ValueError("record_type is not a dataclass but must be!")
@@ -60,9 +83,15 @@ class DelimitedDataWriter(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._header: tuple[str, ...] = tuple(field.name for field in self._fields)
         self._header_list: list[str] = list(self._header)  # DictWriter needs a list
+        self._field_type_map: dict[str, type | Any | str] = {f.name: f.type for f in self._fields}
+        self._field_codecs: dict[str, FieldCodec[Any]] = {
+            field.name: codecs[strip_optional(field.type)]
+            for field in self._fields
+            if strip_optional(field.type) in codecs
+        }
 
-        # Build a JSON encoder for intermediate data conversion (after dataclass; before delimited).
-        self._encoder: JSONEncoder = JSONEncoder(enc_hook=enc_hook)
+        # Build a JSON encoder for writing values that are not strings once converted to builtins.
+        self._encoder: JSONEncoder = JSONEncoder()
 
         # Build the delimited dictionary writer which will use platform-dependent newlines.
         self._writer: DictWriter[str] = DictWriter(
@@ -73,29 +102,6 @@ class DelimitedDataWriter(
             quotechar="'",
             quoting=csv.QUOTE_MINIMAL,
         )
-
-    def with_encoder(self, enc_hook: Callable[[Any], Any]) -> Self:
-        """Chain an additional encoder hook.
-
-        This allows building up multiple transformations::
-
-            writer = (CsvWriter.from_path("out.csv", MyData)
-                .with_encoder(custom_encoder_1)
-                .with_encoder(custom_encoder_2))
-
-        Args:
-            enc_hook: A function that takes a value and returns the encoded value.
-
-        Returns:
-            Self for method chaining.
-        """
-        old_hook = self._enc_hook
-        if old_hook is None:
-            self._enc_hook = enc_hook
-        else:
-            self._enc_hook = lambda x: old_hook(enc_hook(x))
-        self._encoder = JSONEncoder(enc_hook=self._enc_hook)
-        return self
 
     @override
     def __enter__(self) -> Self:
@@ -114,39 +120,22 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _encode(self, item: Any) -> Any:
-        """Encode a value before writing to the delimited file.
-
-        This method can be overridden in subclasses to provide custom encoding logic
-        for specific types. The method receives a field value and should return the
-        encoded representation (often a string or value that can be serialized).
-
-        Args:
-            item: The value to encode.
-
-        Returns:
-            The encoded value ready to be written.
-
-        Example:
-            >>> def _encode(self, item):
-            ...     # Convert None to a period for BED format
-            ...     if item is None:
-            ...         return "."
-            ...     # Convert lists to comma-separated strings
-            ...     if isinstance(item, list):
-            ...         return ",".join(map(str, item))
-            ...     return item
-        """
-        # If an enc_hook function was provided, use it
-        if self._enc_hook is not None:
-            return self._enc_hook(item)
-        return item
-
-    def _format(self, value: Any) -> str:
-        """Format a field value as the text of one delimited field."""
-        builtin = to_builtins(self._encode(value), str_keys=True, enc_hook=self._enc_hook)
-        if builtin is None:
+    def _format(self, field_name: str, value: Any) -> str:
+        """Write the value of one field into its text."""
+        if value is None:
             return self._none_field
+
+        codec = self._field_codecs.get(field_name)
+        if codec is not None:
+            try:
+                return codec.into_text(value)
+            except Exception as exception:
+                field_type = type_name(strip_optional(self._field_type_map[field_name]))
+                raise ValueError(
+                    f"Could not write field '{field_name}' of type {field_type}!"
+                ) from exception
+
+        builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
         if isinstance(builtin, str):
             return builtin
         return self._encoder.encode(builtin).decode("utf-8")
@@ -154,14 +143,16 @@ class DelimitedDataWriter(
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.
 
-        Each field value is passed through `_encode()`, converted to builtin types, and then written
-        as-is when a string, as the `none_field` when None, or as JSON otherwise.
+        Each field is written as the `none_field` when None, or with the codec for its type. Other
+        values are converted to builtin types, then written as-is when a string, or else as JSON.
         """
         if not isinstance(record, self._record_type):
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {record.__class__.__qualname__}!"
             )
-        self._writer.writerow({name: self._format(getattr(record, name)) for name in self._header})
+        self._writer.writerow({
+            name: self._format(name, getattr(record, name)) for name in self._header
+        })
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
@@ -173,23 +164,21 @@ class DelimitedDataWriter(
 
     @classmethod
     def from_path(
-        cls: type["DelimitedDataWriter[RecordType]"],
-        path: Path | str,
-        record_type: type[RecordType],
-        none_field: str = "null",
-        enc_hook: Callable[[Any], Any] | None = None,
-    ) -> "DelimitedDataWriter[RecordType]":
+        cls, path: Path | str, record_type: type[RecordType], /, **options: Unpack[WriterOptions]
+    ) -> Self:
         """Construct a delimited data writer from a file path.
 
         Args:
             path: the path to the file to write delimited data to.
             record_type: the type of the object we will be writing.
-            none_field: the string that is used in place of None for a field.
-            enc_hook: a custom encoder hook for the underlying JSON encoder.
+            options: the options of the writer, left at the writer's defaults when not given.
         """
-        return cls(
-            Path(path).expanduser().open("w"), record_type, none_field=none_field, enc_hook=enc_hook
-        )
+        handle = Path(path).expanduser().open("w")
+        try:
+            return cls(handle, record_type, **options)
+        except BaseException:
+            handle.close()
+            raise
 
     @classmethod
     def __init_subclass__(cls, **kwargs: Any) -> None:
