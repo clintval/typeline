@@ -279,7 +279,7 @@ class DelimitedDataReader(
             path: the path to the file to read delimited data from.
             options: the options of the reader, left at the reader's defaults when not given.
         """
-        handle = Path(path).expanduser().open("r")
+        handle = Path(path).expanduser().open("r", encoding="utf-8-sig", newline="")
         try:
             return cls(handle, **options)
         except BaseException:

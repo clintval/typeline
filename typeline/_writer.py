@@ -214,7 +214,7 @@ class DelimitedDataWriter(
             options: the options of the writer, left at the writer's defaults when not given.
         """
         _refuse_unknown_options(cls, options)
-        handle = Path(path).expanduser().open("w")
+        handle = Path(path).expanduser().open("w", encoding="utf-8", newline="")
         try:
             return cls(handle, **options)
         except BaseException:
