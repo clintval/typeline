@@ -55,7 +55,7 @@ pip install typeline
 ```pycon
 >>> from typeline import TsvReader
 >>> 
->>> with TsvReader.from_path(temp_file.name, MyData) as reader:
+>>> with TsvReader[MyData].from_path(temp_file.name) as reader:
 ...     for record in reader:
 ...         print(record)
 MyData(field1=10, field2='test1', field3=0.2)

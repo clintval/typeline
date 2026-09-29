@@ -12,9 +12,12 @@ from io import TextIOWrapper
 from os import linesep
 from pathlib import Path
 from types import TracebackType
+from types import new_class
 from typing import Any
 from typing import Callable
+from typing import ClassVar
 from typing import Generic
+from typing import cast
 
 from msgspec import DecodeError
 from msgspec import ValidationError
@@ -31,22 +34,27 @@ DEFAULT_COMMENT_PREFIXES: set[str] = set()
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 """JSON literal keywords that require parsing."""
 
+_PARAMETERIZED_READERS: dict[tuple[type[Any], type[Any]], type[Any]] = {}
+"""A cache of reader subclasses bound to a concrete record type."""
+
 
 class DelimitedDataReader(
     AbstractContextManager["DelimitedDataReader[RecordType]"],
     Iterable[RecordType],
-    Generic[RecordType],
     ABC,
+    Generic[RecordType],
 ):
     """A reader for reading delimited text data into dataclasses."""
 
     delimiter: str
     """The delimiter used to separate fields in the delimited data."""
 
+    _parameterized_record_type: ClassVar[type[Any] | None] = None
+    """The record type bound by subscripting the class, e.g. `CsvReader[MyData]`."""
+
     def __init__(
         self,
         handle: TextIOWrapper,
-        record_type: type[RecordType],
         /,
         header: bool = True,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
@@ -57,14 +65,15 @@ class DelimitedDataReader(
 
         Args:
             handle: a file-like object to read delimited data from.
-            record_type: the type of the object we will be writing.
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
             none_field: the string that is used in place of None for a field.
             dec_hook: a custom decoder hook for the JSON decoder.
         """
-        if not is_dataclass(record_type):
-            raise ValueError("record_type is not a dataclass but must be!")
+        if self._parameterized_record_type is None:
+            name = type(self).__name__
+            raise TypeError(f"{name} must be subscripted with a dataclass, e.g. {name}[MyData]!")
+        record_type = cast(type[RecordType], self._parameterized_record_type)
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIOWrapper = handle
@@ -104,12 +113,30 @@ class DelimitedDataReader(
             cls.delimiter = delimiter
         super().__init_subclass__(**kwargs)
 
+    def __class_getitem__(cls, item: Any) -> Any:
+        """Parameterize the reader, binding a concrete record type so classmethods can see it."""
+        alias = super().__class_getitem__(item)  # type: ignore[misc]  # pyright: ignore[reportAttributeAccessIssue]
+        if not isinstance(item, type) or not is_dataclass(item):
+            return alias
+        key = (cls, item)
+        if key not in _PARAMETERIZED_READERS:
+            _PARAMETERIZED_READERS[key] = new_class(
+                f"{cls.__name__}[{item.__name__}]",
+                (alias,),
+                exec_body=lambda ns: ns.update({
+                    "__module__": cls.__module__,
+                    "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
+                    "_parameterized_record_type": item,
+                }),
+            )
+        return _PARAMETERIZED_READERS[key]
+
     def with_decoder(self, dec_hook: Callable[[type, Any], Any]) -> Self:
         """Chain an additional decoder hook.
 
         This allows building up multiple transformations::
 
-            reader = (CsvReader.from_path("data.csv", MyData)
+            reader = (CsvReader[MyData].from_path("data.csv")
                 .with_decoder(custom_decoder_1)
                 .with_decoder(custom_decoder_2))
 
@@ -176,7 +203,7 @@ class DelimitedDataReader(
             ...     return item
         """
         if self._dec_hook is not None:
-            return self._dec_hook(field_type, item)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+            return self._dec_hook(field_type, item)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
         return item
 
     def _preprocess(self, field_name: str, value: Any) -> Any:
@@ -246,7 +273,6 @@ class DelimitedDataReader(
     def from_path(
         cls,
         path: Path | str,
-        record_type: type[RecordType],
         /,
         header: bool = True,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
@@ -257,7 +283,6 @@ class DelimitedDataReader(
 
         Args:
             path: the path to the file to read delimited data from.
-            record_type: the type of the object we will be reading.
             header: whether we expect the first line to be a header or not.
             comment_prefixes: skip lines that have any of these string prefixes.
             none_field: the string that is used in place of None for a field.
@@ -266,7 +291,6 @@ class DelimitedDataReader(
         handle = Path(path).expanduser().open("r")
         reader = cls(
             handle,
-            record_type,
             header=header,
             comment_prefixes=comment_prefixes,
             none_field=none_field,
@@ -294,7 +318,7 @@ class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with CsvReader.from_path(tmpfile.name, MyData) as reader:
+        ...     with CsvReader[MyData].from_path(tmpfile.name) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
@@ -322,7 +346,7 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
         >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
         ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
         ...     _ = tmpfile.flush()
-        ...     with TsvReader.from_path(tmpfile.name, MyData) as reader:
+        ...     with TsvReader[MyData].from_path(tmpfile.name) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)

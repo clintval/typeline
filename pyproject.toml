@@ -49,6 +49,7 @@ pytest = "^8.3"
 pytest-cov = "^6.0"
 pytest-doctestplus = "^1.4"
 ruff = "^0.11"
+ty = "^0.0.84"
 
 [build-system]
 requires = ["poetry-core>=1.8"]
@@ -71,7 +72,8 @@ check-tests = "pytest --doctest-glob='*.md'"
 
 _check-mypy = "mypy"
 _check-pyright = "basedpyright"
-check-typing.sequence = ["_check-mypy", "_check-pyright"]
+_check-ty = "ty check"
+check-typing.sequence = ["_check-mypy", "_check-pyright", "_check-ty"]
 
 check-all.ignore_fail = "return_non_zero"
 check-all.sequence = [

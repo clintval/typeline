@@ -24,8 +24,8 @@ from ._data_types import RecordType
 
 class DelimitedDataWriter(
     AbstractContextManager["DelimitedDataWriter[RecordType]"],
-    Generic[RecordType],
     ABC,
+    Generic[RecordType],
 ):
     """A writer for writing dataclasses into delimited data."""
 
