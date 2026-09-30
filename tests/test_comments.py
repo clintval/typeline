@@ -183,3 +183,17 @@ def test_writer_refuses_a_comment_object_holding_a_line_break() -> None:
         ValueError, match=r"^A Comment is one line, but this one holds a line break"
     ):
         TsvWriter[Point](StringIO()).write_comment(Comment(1, "# a\nb"))
+
+
+def test_a_default_reader_reads_what_a_default_writer_writes_with_comments() -> None:
+    """Test that readers and writers both treat lines starting with # as comments by default."""
+    handle = StringIO()
+    writer = TsvWriter[Point](handle)
+    writer.write_comment("made by a tool")
+    writer.write_header()
+    writer.write(Point(1, 2))
+
+    comments: list[Comment] = []
+    with TsvReader[Point](StringIO(handle.getvalue()), on_comment=comments.append) as reader:
+        assert list(reader) == [Point(1, 2)]
+    assert comments == [Comment(1, "# made by a tool")]

@@ -114,14 +114,14 @@ A codec's `missing` text, as `typeline.codecs.nullable` sets, takes the place of
 
 A reader skips lines that start with any of its `comment_prefixes`, and hands each one to `on_comment` as a `Comment` with its line number.
 A writer writes comments with `write_comment`, so comments can be passed straight from a reader to a writer and keep their places.
-Readers have no comment prefixes by default, and writers use `#`.
+Readers and writers take lines starting with `#` as comments by default.
 
 ```pycon
 >>> _ = Path(temp_file.name).write_text("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
 >>>
 >>> with (
 ...     TsvWriter.from_path[MyData](f"{temp_file.name}.copy") as writer,
-...     TsvReader.from_path[MyData](temp_file.name, comment_prefixes={"#"}, on_comment=writer.write_comment) as reader,
+...     TsvReader.from_path[MyData](temp_file.name, on_comment=writer.write_comment) as reader,
 ... ):
 ...     writer.write_header()
 ...     for record in reader:
@@ -305,7 +305,6 @@ Subclass a reader to give a format its own defaults.
 ...     def __init__(self, handle: TextIO, /, **options: Unpack[ReaderOptions]) -> None:
 ...         defaults: ReaderOptions = {
 ...             "header": False,
-...             "comment_prefixes": {"#"},
 ...             "none_field": ".",
 ...             "codecs": {dict[str, str]: key_value()},
 ...         }

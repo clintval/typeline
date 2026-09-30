@@ -40,7 +40,7 @@ from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
 
-DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ()
+DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 """The default line prefixes that will tell the reader to skip those lines."""
 
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
