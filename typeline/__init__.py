@@ -1,4 +1,5 @@
 from ._binding import FixedRecordType
+from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._counter_columns import CounterColumns
 from ._data_types import ExtraColumns
@@ -27,6 +28,7 @@ __all__ = [
     "FixedRecordType",
     "ReaderOptions",
     "RecordType",
+    "SubscriptableClassmethod",
     "TsvReader",
     "TsvWriter",
     "WriterOptions",
