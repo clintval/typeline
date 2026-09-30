@@ -1,11 +1,9 @@
 import csv
-from collections.abc import Mapping
+import re
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
-from dataclasses import Field
-from dataclasses import fields as fields_of
-from inspect import Parameter
-from inspect import signature
+from io import StringIO
+from math import isfinite
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -56,7 +54,11 @@ class WriterOptions(TypedDict, total=False, closed=True):
     """The prefixes a comment line may start with; the first is added to lines without one."""
 
     quoting: bool
-    """Whether fields are quoted when needed, as in CSV, or never, as in formats like BED."""
+    """Whether fields are quoted when needed, as in CSV, or never, for formats without quoting."""
+
+
+LINE_BREAK: re.Pattern[str] = re.compile(r"\r\n|\r|\n")
+"""The line breaks a reader splits lines at."""
 
 
 class DelimitedDataWriter(
@@ -80,8 +82,9 @@ class DelimitedDataWriter(
         """Instantiate a new delimited record writer.
 
         Args:
-            handle: a file-like object to write delimited data to.
-            none_field: the string that is used in place of None for a field.
+            handle: a text stream to write delimited data to, opened with `newline=""`.
+            none_field: the text written for None; with the default `""`, an empty `str | None`
+                reads as None.
             codecs: how to write a field into its text, by the field's type.
             enc_hook: encode custom types anywhere in a record, like msgspec's `enc_hook`.
             comment_prefixes: the prefixes a comment line may start with; the first is added to
@@ -97,23 +100,27 @@ class DelimitedDataWriter(
         self._none_field: str = none_field
         self._enc_hook: Callable[[Any], Any] | None = enc_hook
         self._quoting: bool = quoting
+        if isinstance(comment_prefixes, str):
+            raise TypeError(
+                "comment_prefixes must be a collection of strings,"
+                + f" not the string {comment_prefixes!r}!"
+            )
         if not comment_prefixes:
             raise ValueError("comment_prefixes must hold at least one prefix!")
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
 
         # Inspect the record type and save the fields and field names.
-        self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._header: tuple[str, ...] = tuple(
             column
-            for field in self._fields
-            if field.name != self._extra_field
-            for column in self._counters.columns_of(field.name)
+            for name in self._field_type_map
+            if name != self._extra_field
+            for column in self._counters.columns_of(name)
         )
-        self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
-            (name, find_codec(field_type, codecs))
+        self._field_codecs: list[tuple[str, FieldCodec[Any] | None, bool]] = [
+            (name, find_codec(field_type, codecs), name in self._counters)
             for name, field_type in self._field_type_map.items()
             if name != self._extra_field
         ]
@@ -128,6 +135,9 @@ class DelimitedDataWriter(
             lineterminator=linesep,
             quotechar='"' if quoting else None,
             quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
+        )
+        self._quoting_writer: Any = csv.writer(
+            handle, delimiter=self.delimiter, lineterminator=linesep, quoting=csv.QUOTE_ALL
         )
 
     @override
@@ -170,13 +180,17 @@ class DelimitedDataWriter(
             return str(value)
         if kind is bool:
             return "true" if value else "false"
-        if kind is float:
-            return self._encoder.encode(value).decode("utf-8")
+        if kind is float and isinstance(value, float):
+            return self._encoder.encode(value).decode("utf-8") if isfinite(value) else repr(value)
 
-        builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
-        if isinstance(builtin, str):
-            return builtin
-        return self._encoder.encode(builtin).decode("utf-8")
+        try:
+            builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
+            return builtin if isinstance(builtin, str) else self._encoder.encode(builtin).decode()
+        except (TypeError, ValueError) as exception:
+            field_type = type_name(self._field_type_map[field_name])
+            raise ValueError(
+                f"Could not write field '{field_name}' of type {field_type}!"
+            ) from exception
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.
@@ -188,29 +202,48 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        counters = self._counters
-        row: list[str] = []
-        for name, codec in self._field_codecs:
-            if name in counters:
-                row.extend(counters.write(name, getattr(record, name)))
-            else:
-                row.append(self._format(name, getattr(record, name), codec))
+        if self._counters:
+            row: list[str] = []
+            for name, codec, is_counter in self._field_codecs:
+                if is_counter:
+                    row.extend(self._counters.write(name, getattr(record, name)))
+                else:
+                    row.append(self._format(name, getattr(record, name), codec))
+        else:
+            row = [
+                self._format(name, getattr(record, name), codec)
+                for name, codec, _ in self._field_codecs
+            ]
         if self._extra_field is not None:
-            row.extend(getattr(record, self._extra_field))
-        if not self._quoting and any(map(self._needs_quoting, row)):
-            raise self._unquotable(row)
-        try:
+            extra = getattr(record, self._extra_field)
+            if not all(type(text) is str for text in extra):
+                raise ValueError(
+                    f"The ExtraColumns field '{self._extra_field}' of"
+                    + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
+                )
+            row.extend(extra)
+        if self._quoting and not (row and row[0].startswith(self._comment_prefixes)):
             self._writer.writerow(row)
-        except csv.Error as exception:
-            if self._quoting:
-                raise
-            raise self._unquotable(row) from exception
+        else:
+            self._write_row(row)
+
+    def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
+        """Write a row, quoting it whole when its first field would read as a comment."""
+        like_comment = bool(row) and row[0].startswith(self._comment_prefixes)
+        if not self._quoting:
+            if like_comment or list(row) == [""] or any(map(self._needs_quoting, row)):
+                raise self._unquotable(row)
+            self._writer.writerow(row)
+        elif like_comment:
+            self._quoting_writer.writerow(row)
+        else:
+            self._writer.writerow(row)
 
     def _needs_quoting(self, text: str) -> bool:
         """Return whether text holds the delimiter or a line break, and so must be quoted."""
         return self.delimiter in text or "\n" in text or "\r" in text
 
-    def _unquotable(self, row: list[str]) -> ValueError:
+    def _unquotable(self, row: list[str] | tuple[str, ...]) -> ValueError:
         """Explain which field of a row cannot be written without quoting."""
         index, reason = next(
             (
@@ -218,7 +251,9 @@ class DelimitedDataWriter(
                 for index, text in enumerate(row)
                 if self._needs_quoting(text)
             ),
-            (0, "a record of one empty field must be quoted"),
+            (0, "a record of one empty field must be quoted")
+            if list(row) == [""]
+            else (0, f"its text starts with a comment prefix: {row[0]!r}"),
         )
         name = self._header[index] if index < len(self._header) else self._extra_field
         return ValueError(
@@ -228,7 +263,7 @@ class DelimitedDataWriter(
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
-        self._writer.writerow(self._header)
+        self._write_row(self._header)
 
     def write_comment(self, comment: str | Comment) -> None:
         """Write a comment, e.g. one a reader sent to `on_comment`.
@@ -237,10 +272,14 @@ class DelimitedDataWriter(
         starts with one of the writer's comment prefixes, or else after the first prefix.
         """
         if isinstance(comment, Comment):
+            if LINE_BREAK.search(comment.text):
+                raise ValueError(
+                    f"A Comment is one line, but this one holds a line break: {comment.text!r}!"
+                )
             _ = self._handle.write(f"{comment.text}{linesep}")
             return
         prefix = self._comment_prefixes[0]
-        for line in comment.splitlines():
+        for line in LINE_BREAK.split(comment.rstrip("\r\n")):
             text = line if line.startswith(self._comment_prefixes) else f"{prefix} {line}".rstrip()
             _ = self._handle.write(f"{text}{linesep}")
 
@@ -253,30 +292,20 @@ class DelimitedDataWriter(
     def from_path(cls, path: Path | str, /, **options: Unpack[WriterOptions]) -> Self:
         """Construct a delimited data writer from a file path.
 
+        The file is written as UTF-8, and compressed when its path ends in `.gz`, `.bz2`, or `.xz`.
+        The writer is checked before the file is opened, so a refused writer leaves a file alone.
+
         Args:
             path: the path to the file to write delimited data to.
             options: the options of the writer, left at the writer's defaults when not given.
         """
-        _refuse_unknown_options(cls, options)
+        _ = cls(StringIO(), **options)
         handle = open_for_writing(path)
         try:
             return cls(handle, **options)
         except BaseException:
             handle.close()
             raise
-
-
-def _refuse_unknown_options(cls: type[Any], options: Mapping[str, Any]) -> None:
-    """Refuse options the writer does not take, before its file is opened and so emptied."""
-    parameters = signature(cls).parameters
-    arguments = signature(cls).bind(None, **options).arguments
-    for name, parameter in parameters.items():
-        if parameter.kind is Parameter.VAR_KEYWORD:
-            unknown = sorted(set(arguments.get(name, {})) - set(WriterOptions.__annotations__))
-            if unknown:
-                raise TypeError(
-                    f"{cls.__name__}() got an unexpected keyword argument '{unknown[0]}'"
-                )
 
 
 class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):

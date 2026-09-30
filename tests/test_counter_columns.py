@@ -80,9 +80,9 @@ def test_reader_refuses_a_header_missing_member_columns(tmp_path: Path) -> None:
     _ = path.write_text("name\tT\tA\nsite1\t4\t1\n")
 
     message = (
-        r"^Fields of header do not match fields of dataclass!"
+        r"^Columns of header do not match fields of Pileup on line 1!"
         + r" Header: \['name', 'T', 'A'\]\."
-        + r" Fields of Pileup: \['name', 'A', 'C', 'G', 'T'\]\."
+        + r" Columns of Pileup: \['name', 'A', 'C', 'G', 'T'\]\."
         + r" Missing from header: \['C', 'G'\]\.$"
     )
     with pytest.raises(ValueError, match=message):
@@ -182,7 +182,7 @@ def test_reader_refuses_a_repeated_member_column(tmp_path: Path) -> None:
     path = tmp_path / "pileup.tsv"
     _ = path.write_text("name\tA\tC\tA\n")
 
-    message = r"^Fields of header repeat a name! .* Repeated in header: \['A'\].$"
+    message = r"^Columns of header repeat a name on line 1! .* Repeated in header: \['A'\].$"
     with pytest.raises(ValueError, match=message):
         _ = TsvReader.from_path[Pileup](path)
 
@@ -192,7 +192,7 @@ def test_reader_refuses_a_header_missing_a_field_beside_the_member_columns(tmp_p
     path = tmp_path / "positions.tsv"
     _ = path.write_text("depth\tA\n")
 
-    message = r"^Fields of header do not match fields of dataclass!"
+    message = r"^Columns of header do not match fields of "
     with pytest.raises(ValueError, match=message):
         _ = TsvReader.from_path[Position](path)
 
@@ -443,3 +443,13 @@ def test_readers_and_writers_refuse_a_member_named_like_a_field() -> None:
     for kind in READERS_AND_WRITERS:
         with pytest.raises(TypeError, match=message):
             _ = kind[record_type](StringIO("name\n"))
+
+
+def test_readers_and_writers_refuse_an_optional_counter_field() -> None:
+    """Test that an optional CounterColumns field is refused rather than read as one column."""
+    record_type = make_dataclass("Bad", [("counts", CounterColumns[Base] | None)])
+
+    message = r"^The CounterColumns field 'counts' of Bad may not be optional!$"
+    for kind in READERS_AND_WRITERS:
+        with pytest.raises(TypeError, match=message):
+            _ = kind[record_type](StringIO("A\n"))

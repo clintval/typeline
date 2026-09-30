@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from typeline import Comment
 from typeline import CsvReader
@@ -90,3 +93,115 @@ def test_comments_stream_from_a_reader_into_a_writer(tmp_path: Path) -> None:
             writer.write(record)
 
     assert (tmp_path / "out.tsv").read_text() == text
+
+
+@dataclass(frozen=True)
+class Note:
+    """A record of two optional text fields."""
+
+    a: str | None
+    b: str | None
+
+
+def test_reader_keeps_a_row_of_empty_fields() -> None:
+    """Test that a row whose fields are all empty is a record, not a blank line."""
+    handle = StringIO()
+    writer = TsvWriter[Note](handle)
+    writer.write(Note(None, None))
+    writer.write(Note("x", "y"))
+
+    with TsvReader[Note](StringIO(handle.getvalue()), header=False) as reader:
+        assert list(reader) == [Note(None, None), Note("x", "y")]
+
+
+def test_reader_skips_whitespace_lines_but_keeps_rows_of_whitespace_fields() -> None:
+    """Test that a line of only whitespace is blank, but one holding a delimiter is a record."""
+    with CsvReader[Note](StringIO("  \n , \n\t\n"), header=False) as reader:
+        assert list(reader) == [Note(" ", " ")]
+
+
+def test_reader_keeps_a_row_that_starts_with_a_prefix_after_other_text() -> None:
+    """Test that only lines starting with a comment prefix are comments."""
+    text = "\t#x\n  #y\tz\n"
+    with TsvReader[Note](StringIO(text), header=False, comment_prefixes={"#"}) as reader:
+        assert list(reader) == [Note(None, "#x"), Note("  #y", "z")]
+
+
+def test_reader_keeps_blank_and_comment_like_lines_inside_quoted_fields() -> None:
+    """Test that lines inside a quoted field are text, never blank lines or comments."""
+    comments: list[Comment] = []
+    text = '# top\n"one\n\n#two\n",x\n\n# bottom\ny,z\n'
+
+    with CsvReader[Note](
+        StringIO(text), header=False, comment_prefixes={"#"}, on_comment=comments.append
+    ) as reader:
+        assert list(reader) == [Note("one\n\n#two\n", "x"), Note("y", "z")]
+
+    assert comments == [Comment(1, "# top"), Comment(7, "# bottom")]
+
+
+def test_writer_output_with_tricky_text_reads_back() -> None:
+    """Test that records whose text looks like blank lines or comments read back unchanged."""
+    records = [Note("a\n\nb", "#c"), Note("\n#d", None), Note(None, None)]
+    handle = StringIO()
+    writer = CsvWriter[Note](handle)
+    for record in records:
+        writer.write(record)
+
+    with CsvReader[Note](
+        StringIO(handle.getvalue()), header=False, comment_prefixes={"#"}
+    ) as reader:
+        assert list(reader) == records
+
+
+@pytest.mark.parametrize("kind", [TsvReader, TsvWriter])
+def test_a_string_of_comment_prefixes_is_refused(kind: Any) -> None:
+    """Test that one string given as comment_prefixes is refused, not split into characters."""
+    with pytest.raises(TypeError, match=r"^comment_prefixes must be a collection of strings"):
+        _ = kind[Point](StringIO(), comment_prefixes="//")
+
+
+def test_writer_writes_an_empty_comment_as_a_bare_prefix() -> None:
+    """Test that an empty comment is written as a line holding only the first prefix."""
+    handle = StringIO()
+    TsvWriter[Point](handle).write_comment("")
+
+    assert handle.getvalue() == "#\n"
+
+
+def test_writer_splits_a_comment_only_at_line_breaks_the_reader_knows() -> None:
+    """Test that a comment is split only at the line breaks a reader knows, keeping blank lines."""
+    handle = StringIO()
+    TsvWriter[Point](handle).write_comment("a\x1cb\r\nc\rd\n\ne\n")
+
+    assert handle.getvalue() == "# a\x1cb\n# c\n# d\n#\n# e\n"
+
+
+def test_writer_refuses_a_comment_object_holding_a_line_break() -> None:
+    """Test that a Comment, written as it was read, may not hold a line break."""
+    with pytest.raises(
+        ValueError, match=r"^A Comment is one line, but this one holds a line break"
+    ):
+        TsvWriter[Point](StringIO()).write_comment(Comment(1, "# a\nb"))
+
+
+def test_a_default_reader_reads_what_a_default_writer_writes_with_comments() -> None:
+    """Test that readers and writers both treat lines starting with # as comments by default."""
+    handle = StringIO()
+    writer = TsvWriter[Point](handle)
+    writer.write_comment("made by a tool")
+    writer.write_header()
+    writer.write(Point(1, 2))
+
+    comments: list[Comment] = []
+    with TsvReader[Point](StringIO(handle.getvalue()), on_comment=comments.append) as reader:
+        assert list(reader) == [Point(1, 2)]
+    assert comments == [Comment(1, "# made by a tool")]
+
+
+def test_reader_skips_comments_and_blank_lines_between_records() -> None:
+    """Test that a reader skips comment lines and blank lines between records."""
+    text = "x,y\n# this is a comment\n#and this is a comment too!\n1,2\n\n  \n3,4\n"
+
+    with CsvReader[Point](StringIO(text)) as reader:
+        assert list(reader) == [Point(1, 2), Point(3, 4)]

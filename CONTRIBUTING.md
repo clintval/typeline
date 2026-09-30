@@ -83,3 +83,9 @@ uv run poe fix-all
 ```console
 uv run poe fix-and-check-all
 ```
+
+## Releasing
+
+Commit titles follow [Conventional Commits](https://www.conventionalcommits.org), which group the release notes.
+To release, merge a pull request titled `chore(release): bump to X.Y.Z` that sets the version in `pyproject.toml`, then tag its commit on `main` with `X.Y.Z` and push the tag.
+The `publish_typeline.yml` workflow then builds, tests, and publishes the package to PyPI and makes a GitHub release with notes from [git-cliff](https://git-cliff.org).

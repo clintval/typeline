@@ -98,7 +98,7 @@ def find_codec(
 
 
 class _ExtraColumnsMarker:
-    """Marks the field of a record that holds the columns past its other fields."""
+    """Marks the field of a record that holds the columns no other field takes."""
 
     @override
     def __repr__(self) -> str:
@@ -109,7 +109,7 @@ EXTRA_COLUMNS_MARKER = _ExtraColumnsMarker()
 """The marker in `ExtraColumns` that readers and writers look for."""
 
 ExtraColumns: TypeAlias = Annotated[tuple[str, ...], EXTRA_COLUMNS_MARKER]
-"""The type of a record's last field that holds any columns past its other fields, as text.
+"""The type of a record's last field that holds, as text, the columns no other field takes.
 
 Example:
     ```python

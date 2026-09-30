@@ -11,6 +11,7 @@ from typing import get_origin
 from typing_extensions import override
 
 from ._data_types import strip_annotated
+from ._data_types import strip_optional
 
 
 class _CounterColumnsMarker:
@@ -28,7 +29,7 @@ MemberType = TypeVar("MemberType", bound=Enum)
 """The type variable for the enum whose members a `CounterColumns` field counts."""
 
 CounterColumns: TypeAlias = Annotated[Counter[MemberType], COUNTER_COLUMNS_MARKER]
-"""The type of a record's field that counts each member of an enum in a column named after it.
+"""The type of a record's field that counts each member of an enum, in one column per member.
 
 The enum's values must be text, as with a `StrEnum`, and name the columns.
 
@@ -42,6 +43,11 @@ Example:
 """
 
 
+def _is_counter(field_type: Any) -> bool:
+    """Return whether a field's type is a `CounterColumns` type."""
+    return get_origin(field_type) is Annotated and COUNTER_COLUMNS_MARKER in get_args(field_type)
+
+
 class CounterFields:
     """The `CounterColumns` fields of a record, and how their member columns are read and written.
 
@@ -53,9 +59,12 @@ class CounterFields:
         self._enums: dict[str, type[Enum]] = {}
         self._by_column: dict[str, tuple[str, Enum]] = {}
         for name, field_type in field_type_map.items():
-            if get_origin(field_type) is Annotated and COUNTER_COLUMNS_MARKER in get_args(
-                field_type
-            ):
+            if _is_counter(strip_optional(field_type)) and not _is_counter(field_type):
+                raise TypeError(
+                    f"The CounterColumns field '{name}' of {record_type.__name__}"
+                    + " may not be optional!"
+                )
+            if _is_counter(field_type):
                 self._enums[name] = self._enum_of(record_type, name, field_type)
                 for member in self._enums[name]:
                     self._claim(record_type, name, member, field_type_map)
@@ -64,6 +73,9 @@ class CounterFields:
             for name, enum in self._enums.items()
         }
         self._positions: dict[str, list[tuple[Enum, int]]] = {name: [] for name in self._enums}
+        self._zeros: dict[str, dict[Enum, int]] = {
+            name: dict.fromkeys(enum, 0) for name, enum in self._enums.items()
+        }
 
     def __bool__(self) -> bool:
         """Return whether the record has any `CounterColumns` field."""
@@ -113,8 +125,7 @@ class CounterFields:
 
     def locate(self, layout: list[str]) -> None:
         """Find where each member's column is in the columns of the data."""
-        for positions in self._positions.values():
-            positions.clear()
+        self._positions = {name: [] for name in self._enums}
         for index, column in enumerate(layout):
             if column in self._by_column:
                 name, member = self._by_column[column]
@@ -123,8 +134,8 @@ class CounterFields:
     def read(self, row: list[str], line_number: int) -> dict[str, Counter[Enum]]:
         """Read the count of each member of each field from its column in a row."""
         counters: dict[str, Counter[Enum]] = {}
-        for name, enum in self._enums.items():
-            counts: Counter[Enum] = Counter(dict.fromkeys(enum, 0))
+        for name, zeros in self._zeros.items():
+            counts: Counter[Enum] = Counter(zeros)
             for member, index in self._positions[name]:
                 text = row[index]
                 if not (text.isascii() and text.isdigit()):

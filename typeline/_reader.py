@@ -1,11 +1,9 @@
 import csv
+from collections import Counter
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from dataclasses import Field
-from dataclasses import fields as fields_of
-from os import linesep
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -40,7 +38,7 @@ from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
 
-DEFAULT_COMMENT_PREFIXES: set[str] = set()
+DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 """The default line prefixes that will tell the reader to skip those lines."""
 
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
@@ -51,10 +49,10 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     """The options of a delimited data reader."""
 
     header: bool
-    """Whether we expect the first line to be a header or not."""
+    """Whether the first record is a header, whose columns are matched to fields by name."""
 
     comment_prefixes: Collection[str]
-    """Skip lines that have any of these string prefixes."""
+    """Skip lines that start with any of these prefixes, between records."""
 
     none_field: str
     """The text read as None in fields that allow None; a `str` field keeps it as text."""
@@ -69,7 +67,7 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     """Receive each comment line as it is skipped; comments are dropped if None."""
 
     quoting: bool
-    """Whether `"` quotes fields, as in CSV, or is ordinary text, as in formats like BED."""
+    """Whether `"` quotes fields, as in CSV, or is ordinary text, for formats without quoting."""
 
 
 class DelimitedDataReader(
@@ -97,9 +95,9 @@ class DelimitedDataReader(
 
         Args:
             handle: a file-like object to read delimited data from.
-            header: whether we expect the first line to be a header or not.
-            comment_prefixes: skip lines that have any of these string prefixes.
-            none_field: the string that is used in place of None for a field.
+            header: whether the first record is a header, matched to fields by name.
+            comment_prefixes: skip lines that start with any of these prefixes, between records.
+            none_field: the text read as None in fields that allow None; a `str` field keeps it.
             codecs: how to read a field from its text, by the field's type.
             dec_hook: decode custom types anywhere in a record, like msgspec's `dec_hook`.
             on_comment: receive each comment line as it is skipped; comments are dropped if None.
@@ -109,8 +107,13 @@ class DelimitedDataReader(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
-        self._line_count: int = 0
+        self._record_line: int = 0
         self._record_type: type[RecordType] = record_type
+        if isinstance(comment_prefixes, str):
+            raise TypeError(
+                "comment_prefixes must be a collection of strings,"
+                + f" not the string {comment_prefixes!r}!"
+            )
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
@@ -121,32 +124,27 @@ class DelimitedDataReader(
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
 
         # Inspect the record type, and decide once how each field is read from its text.
-        self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
-        self._header: list[str] = [
-            field.name
-            for field in self._fields
-            if field.name != self._extra_field and field.name not in self._counters
-        ]
         self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
             if name != self._extra_field and name not in self._counters
         ]
+        self._header: list[str] = [name for name, _ in self._field_readers]
         self._columns: list[str] = [
             column
-            for field in self._fields
-            if field.name != self._extra_field
-            for column in self._counters.columns_of(field.name)
+            for name in self._field_type_map
+            if name != self._extra_field
+            for column in self._counters.columns_of(name)
         ]
 
-        # Read rows as lists, filtering out any comment lines along the way.
-        self._rows: Iterator[list[str]] = csv.reader(
+        # Read rows as lists, filtering out blank and comment lines between records.
+        self._record_end: int = 0
+        self._rows: Any = csv.reader(
             self._filter_out_comments(handle),
             delimiter=self.delimiter,
-            lineterminator=linesep,
             quotechar='"' if quoting else None,
             quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         )
@@ -155,20 +153,25 @@ class DelimitedDataReader(
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
         found: list[str] | None = next(self._rows, None) if header else None
+        self._record_end = self._rows.line_num
+        columns: set[str] = set(self._columns)
         if found is not None:
-            repeated: list[str] = sorted({name for name in found if found.count(name) > 1})
+            repeated: list[str] = sorted(
+                name for name, count in Counter(found).items() if count > 1 and name in columns
+            )
             if repeated:
                 raise ValueError(
-                    f"Fields of header repeat a name! Header: {found}."
-                    + f" Repeated in header: {repeated}."
+                    f"Columns of header repeat a name on line {self._record_line}!"
+                    + f" Header: {found}. Repeated in header: {repeated}."
                 )
-            missing: list[str] = [name for name in self._columns if name not in found]
-            unexpected: list[str] = [name for name in found if name not in self._columns]
+            present: set[str] = set(found)
+            missing: list[str] = [name for name in self._columns if name not in present]
+            unexpected: list[str] = [name for name in found if name not in columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
-                    "Fields of header do not match fields of dataclass!"
-                    + f" Header: {found}."
-                    + f" Fields of {record_type.__name__}: {self._columns}."
+                    f"Columns of header do not match fields of {record_type.__name__}"
+                    + f" on line {self._record_line}! Header: {found}."
+                    + f" Columns of {record_type.__name__}: {self._columns}."
                     + (f" Missing from header: {missing}." if missing else "")
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
@@ -176,9 +179,10 @@ class DelimitedDataReader(
         self._width: int = len(layout)
         self._counters.locate(layout)
         if self._counters or layout[: len(self._header)] != self._header:
-            self._positions = [layout.index(name) for name in self._header]
+            index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
+            self._positions = [index_of[name] for name in self._header]
             self._extra_positions = [
-                index for index, name in enumerate(layout) if name not in self._columns
+                index for index, name in enumerate(layout) if name not in columns
             ]
 
     @override
@@ -199,17 +203,29 @@ class DelimitedDataReader(
         return None
 
     def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
-        """Yield only lines in an iterator that do not start with a comment prefix."""
+        """Yield lines, skipping blank lines and comments, and sending comments to on_comment.
+
+        A blank line holds only whitespace and no delimiter. Only a line that starts a record is
+        skipped, so a quoted field keeps every line it holds.
+        """
         prefixes = self._comment_prefixes
+        delimiter = self.delimiter
+        on_comment = self._on_comment
+        line_number = 0
+        yielded = 0
         for line in lines:
-            self._line_count += 1
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if prefixes and stripped.startswith(prefixes):
-                if self._on_comment is not None:
-                    self._on_comment(Comment(self._line_count, line.rstrip("\r\n")))
-                continue
+            line_number += 1
+            if yielded == self._record_end:
+                if line_number == 1:
+                    line = line.removeprefix("\ufeff")
+                if line.isspace() and delimiter not in line:
+                    continue
+                if prefixes and line.startswith(prefixes):
+                    if on_comment is not None:
+                        on_comment(Comment(line_number, line.rstrip("\r\n")))
+                    continue
+                self._record_line = line_number
+            yielded += 1
             yield line
 
     def _field_reader(
@@ -219,17 +235,17 @@ class DelimitedDataReader(
         none_field = self._none_field if accepts_none(field_type) else None
 
         if codec is not None:
-            missing = codec.missing
+            missing = none_field if codec.missing is None else codec.missing
 
             def read_with_codec(text: str) -> Any:
-                if text == none_field or text == missing:
+                if text == missing:
                     return None
                 try:
                     return codec.from_text(text)
                 except Exception as exception:
                     raise ValueError(
                         f"Could not read field '{name}' of type {type_name(field_type)} from text"
-                        + f" '{text}' on line {self._line_count}!"
+                        + f" '{text}' on line {self._record_line}!"
                     ) from exception
 
             return read_with_codec
@@ -247,7 +263,7 @@ class DelimitedDataReader(
             stripped = text.strip()
             if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
                 try:
-                    return decode(text.encode("utf-8"))
+                    return decode(text)
                 except DecodeError:
                     return text
             return text
@@ -261,7 +277,7 @@ class DelimitedDataReader(
             return obj
         if self._dec_hook is not None:
             return self._dec_hook(type_, obj)
-        raise NotImplementedError(f"No dec_hook to convert into {type_name(type_)}.")
+        raise TypeError(f"Expected {type_name(type_)}, got {type(obj).__name__}")
 
     @override
     def __iter__(self) -> Iterator[RecordType]:
@@ -273,52 +289,60 @@ class DelimitedDataReader(
         field_readers = self._field_readers
         extra_field = self._extra_field
         counters = self._counters
-        for row in self._rows:
-            if len(row) != width and (extra_field is None or len(row) < width):
-                at_least = "" if extra_field is None else "at least "
-                raise ValueError(
-                    f"Expected {at_least}{width} fields but found {len(row)} on line"
-                    + f" {self._line_count} for record type: {self._record_type.__name__}."
-                )
-            values = row if positions is None else [row[index] for index in positions]
-            preprocessed = {
-                name: text if read is None else read(text)
-                for (name, read), text in zip(field_readers, values, strict=False)
-            }
-            if extra_field is not None and positions is None:
-                preprocessed[extra_field] = tuple(row[named:])
-            elif extra_field is not None:
-                extra = [row[index] for index in extra_positions]
-                preprocessed[extra_field] = (*extra, *row[width:])
-            if counters:
-                preprocessed.update(counters.read(row, self._line_count))
-            try:
-                yield convert(
-                    preprocessed,
-                    self._record_type,
-                    strict=False,
-                    str_keys=True,
-                    dec_hook=self._convert_hook,
-                )
-            except ValidationError as exception:
-                raise ValidationError(
-                    "Could not parse JSON-like object into requested structure:"
-                    + f" {preprocessed}."
-                    + f" Requested structure: {self._record_type.__name__}."
-                    + f" Original exception: {exception}"
-                ) from exception
+        has_counters = bool(counters)
+        try:
+            rows = self._rows
+            for row in rows:
+                self._record_end = rows.line_num
+                if len(row) != width and (extra_field is None or len(row) < width):
+                    at_least = "" if extra_field is None else "at least "
+                    raise ValueError(
+                        f"Expected {at_least}{width} columns but found {len(row)} on line"
+                        + f" {self._record_line} for record type: {self._record_type.__name__}."
+                    )
+                values = row if positions is None else [row[index] for index in positions]
+                preprocessed = {
+                    name: text if read is None else read(text)
+                    for (name, read), text in zip(field_readers, values, strict=False)
+                }
+                if extra_field is not None and positions is None:
+                    preprocessed[extra_field] = tuple(row[named:])
+                elif extra_field is not None:
+                    extra = [row[index] for index in extra_positions]
+                    preprocessed[extra_field] = (*extra, *row[width:])
+                if has_counters:
+                    preprocessed.update(counters.read(row, self._record_line))
+                try:
+                    yield convert(
+                        preprocessed,
+                        self._record_type,
+                        strict=False,
+                        str_keys=True,
+                        dec_hook=self._convert_hook,
+                    )
+                except ValidationError as exception:
+                    raise ValidationError(
+                        f"Could not build {self._record_type.__name__} from {preprocessed}"
+                        + f" on line {self._record_line}! {exception}"
+                    ) from exception
+        except Exception:
+            if self._close_when_read:
+                self.close()
+            raise
         if self._close_when_read:
             self.close()
 
     def close(self) -> None:
         """Close all opened resources."""
         self._handle.close()
-        return None
 
     @SubscriptableClassmethod
     @classmethod
     def from_path(cls, path: Path | str, /, **options: Unpack[ReaderOptions]) -> Self:
         """Construct a delimited data reader from a file path.
+
+        The file is read as UTF-8, decompressed when it is gzip, bzip2, or xz, and closed once read
+        to the end or when a record fails.
 
         Args:
             path: the path to the file to read delimited data from.

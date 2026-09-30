@@ -80,21 +80,19 @@ class DelimitedData:
         if not isinstance(item, type) or not is_dataclass(item):
             return alias
         key = (cls, item)
-        if key not in _BOUND_CLASSES:
-            _ = _BOUND_CLASSES.setdefault(
-                key,
-                new_class(
-                    f"{cls.__name__}[{item.__name__}]",
-                    (alias,),
-                    exec_body=lambda ns: ns.update({
-                        "__module__": cls.__module__,
-                        "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
-                        "_parameterized_record_type": item,
-                        "_is_subscripted": True,
-                    }),
-                ),
+        bound = _BOUND_CLASSES.get(key)
+        if bound is None:
+            bound = _BOUND_CLASSES[key] = new_class(
+                f"{cls.__name__}[{item.__name__}]",
+                (alias,),
+                exec_body=lambda ns: ns.update({
+                    "__module__": cls.__module__,
+                    "__qualname__": f"{cls.__qualname__}[{item.__qualname__}]",
+                    "_parameterized_record_type": item,
+                    "_is_subscripted": True,
+                }),
             )
-        return _BOUND_CLASSES[key]
+        return bound
 
     def _bound_record_type(self) -> type[Any]:
         """Return the record type bound to this class, refusing a class that cannot be built."""

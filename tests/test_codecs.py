@@ -1,16 +1,20 @@
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Annotated
 from typing import Any
-from typing import Optional
+from typing import Optional  # pyright: ignore[reportDeprecated]
 
 import pytest
+from msgspec import ValidationError
+from typing_extensions import override
 
 from typeline import Codecs
 from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import FieldCodec
 from typeline import TsvReader
+from typeline import TsvWriter
 from typeline.codecs import boolean
 from typeline.codecs import delimited
 from typeline.codecs import key_value
@@ -31,6 +35,7 @@ class Color:
         r, g, b = text.split(",")
         return cls(int(r), int(g), int(b))
 
+    @override
     def __str__(self) -> str:
         """Write a color into its text, e.g. `101,2,32`."""
         return f"{self.r},{self.g},{self.b}"
@@ -41,13 +46,15 @@ class Interval:
 
     def __init__(self, start: int, end: int) -> None:
         """Build an interval from its start and end."""
-        self.start = start
-        self.end = end
+        self.start: int = start
+        self.end: int = end
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Compare intervals by their start and end."""
         return isinstance(other, Interval) and (self.start, self.end) == (other.start, other.end)
 
+    @override
     def __hash__(self) -> int:
         """Hash an interval by its start and end."""
         return hash((self.start, self.end))
@@ -67,7 +74,7 @@ def enc_hook(obj: Any) -> Any:
     """Encode an Interval into a two-element list."""
     if isinstance(obj, Interval):
         return [obj.start, obj.end]
-    raise NotImplementedError(type(obj))
+    raise NotImplementedError
 
 
 @pytest.mark.parametrize(
@@ -199,7 +206,7 @@ class OldStyleOptional:
     """A record with an optional field written with `Optional`."""
 
     name: str
-    color: Optional[Color]  # noqa: UP045
+    color: Optional[Color]  # noqa: UP045  # pyright: ignore[reportDeprecated]
 
 
 @pytest.mark.parametrize("record_type", [NewStyleOptional, OldStyleOptional])
@@ -407,3 +414,69 @@ def test_codecs_for_the_plain_type_apply_to_annotated_fields(tmp_path: Path) -> 
 
     with CsvReader.from_path[Shouting](path, header=False, codecs={str: UPPER}) as reader:
         assert list(reader) == [Shouting("hi", "hey", "hello")]
+
+
+@dataclass(frozen=True)
+class Blocks:
+    """A record with optional blocks, where a codec decides how missing blocks look."""
+
+    blocks: list[int] | None
+
+
+def test_a_codec_missing_marker_replaces_the_none_field_on_read() -> None:
+    """Test that with a codec's missing marker, the none field is ordinary text for that codec."""
+    codecs: Codecs = {list[int]: nullable(delimited(int), missing="NA")}
+    handle = StringIO()
+    writer = CsvWriter[Blocks](handle, codecs=codecs)
+    for record in (Blocks([]), Blocks(None), Blocks([1, 2])):
+        writer.write(record)
+
+    assert handle.getvalue() == '""\nNA\n"1,2"\n'
+    with CsvReader[Blocks](StringIO(handle.getvalue()), header=False, codecs=codecs) as reader:
+        assert list(reader) == [Blocks([]), Blocks(None), Blocks([1, 2])]
+
+
+@pytest.mark.parametrize("items", [["a", ""], [""]])
+@pytest.mark.parametrize("trailing_sep", [False, True])
+def test_delimited_refuses_an_empty_last_item(items: list[str], trailing_sep: bool) -> None:
+    """Test that an empty last item, which would read back as no item, is refused."""
+    codec = delimited(str, trailing_sep=trailing_sep)
+
+    with pytest.raises(
+        ValueError, match=r"^Cannot write an empty last item, which reads back as none!$"
+    ):
+        _ = codec.into_text(items)
+
+
+def test_delimited_writes_empty_items_before_the_last() -> None:
+    """Test that empty items before the last are written and read back."""
+    codec = delimited(str)
+
+    assert codec.into_text(["", "a"]) == ",a"
+    assert codec.from_text(",a") == ["", "a"]
+
+
+class Opaque:
+    """A custom type with no codec and no hook."""
+
+
+@dataclass
+class Holder:
+    """A record holding a custom type."""
+
+    thing: Opaque
+
+
+def test_reading_a_custom_type_without_a_codec_or_hook_names_the_field() -> None:
+    """Test that a custom type with no way to read it raises a ValidationError naming the field."""
+    with (
+        TsvReader[Holder](StringIO("x\n"), header=False) as reader,
+        pytest.raises(ValidationError, match=r"Expected Opaque, got str - at `\$\.thing`"),
+    ):
+        _ = list(reader)
+
+
+def test_writing_a_custom_type_without_a_codec_or_hook_names_the_field() -> None:
+    """Test that a custom type with no way to write it raises a ValueError naming the field."""
+    with pytest.raises(ValueError, match=r"^Could not write field 'thing' of type Opaque!$"):
+        TsvWriter[Holder](StringIO()).write(Holder(Opaque()))
