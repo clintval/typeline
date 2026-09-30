@@ -92,6 +92,7 @@ Leaving the `with` block closes the stream.
 
 `from_path` reads and writes UTF-8, skips a byte order mark, and ends lines with `os.linesep`.
 It reads gzip, bzip2, and xz files, which it recognizes by their contents, and writes them when the path ends in `.gz`, `.bz2`, or `.xz`.
+It opens a path only once, so it also reads and writes pipes such as FIFOs, `/dev/stdin`, and `/dev/stdout`.
 
 ```pycon
 >>> with TsvWriter.from_path[MyData](f"{temp_file.name}.gz") as writer:
