@@ -90,3 +90,62 @@ def test_comments_stream_from_a_reader_into_a_writer(tmp_path: Path) -> None:
             writer.write(record)
 
     assert (tmp_path / "out.tsv").read_text() == text
+
+
+@dataclass(frozen=True)
+class Note:
+    """A record of two optional text fields."""
+
+    a: str | None
+    b: str | None
+
+
+def test_reader_keeps_a_row_of_empty_fields() -> None:
+    """Test that a row whose fields are all empty is a record, not a blank line."""
+    handle = StringIO()
+    writer = TsvWriter[Note](handle)
+    writer.write(Note(None, None))
+    writer.write(Note("x", "y"))
+
+    with TsvReader[Note](StringIO(handle.getvalue()), header=False) as reader:
+        assert list(reader) == [Note(None, None), Note("x", "y")]
+
+
+def test_reader_skips_whitespace_lines_but_keeps_rows_of_whitespace_fields() -> None:
+    """Test that a line of only whitespace is blank, but one holding a delimiter is a record."""
+    with CsvReader[Note](StringIO("  \n , \n\t\n"), header=False) as reader:
+        assert list(reader) == [Note(" ", " ")]
+
+
+def test_reader_keeps_a_row_that_starts_with_a_prefix_after_other_text() -> None:
+    """Test that only lines starting with a comment prefix are comments."""
+    text = "\t#x\n  #y\tz\n"
+    with TsvReader[Note](StringIO(text), header=False, comment_prefixes={"#"}) as reader:
+        assert list(reader) == [Note(None, "#x"), Note("  #y", "z")]
+
+
+def test_reader_keeps_blank_and_comment_like_lines_inside_quoted_fields() -> None:
+    """Test that lines inside a quoted field are text, never blank lines or comments."""
+    comments: list[Comment] = []
+    text = '# top\n"one\n\n#two\n",x\n\n# bottom\ny,z\n'
+
+    with CsvReader[Note](
+        StringIO(text), header=False, comment_prefixes={"#"}, on_comment=comments.append
+    ) as reader:
+        assert list(reader) == [Note("one\n\n#two\n", "x"), Note("y", "z")]
+
+    assert comments == [Comment(1, "# top"), Comment(7, "# bottom")]
+
+
+def test_writer_output_with_tricky_text_reads_back() -> None:
+    """Test that records whose text looks like blank lines or comments read back unchanged."""
+    records = [Note("a\n\nb", "#c"), Note("\n#d", None), Note(None, None)]
+    handle = StringIO()
+    writer = CsvWriter[Note](handle)
+    for record in records:
+        writer.write(record)
+
+    with CsvReader[Note](
+        StringIO(handle.getvalue()), header=False, comment_prefixes={"#"}
+    ) as reader:
+        assert list(reader) == records

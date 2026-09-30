@@ -5,7 +5,6 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
-from os import linesep
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -142,11 +141,11 @@ class DelimitedDataReader(
             for column in self._counters.columns_of(field.name)
         ]
 
-        # Read rows as lists, filtering out any comment lines along the way.
-        self._rows: Iterator[list[str]] = csv.reader(
+        # Read rows as lists, filtering out blank and comment lines between records.
+        self._record_end: int = 0
+        self._rows: Any = csv.reader(
             self._filter_out_comments(handle),
             delimiter=self.delimiter,
-            lineterminator=linesep,
             quotechar='"' if quoting else None,
             quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         )
@@ -155,6 +154,7 @@ class DelimitedDataReader(
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
         found: list[str] | None = next(self._rows, None) if header else None
+        self._record_end = self._rows.line_num
         if found is not None:
             repeated: list[str] = sorted({name for name in found if found.count(name) > 1})
             if repeated:
@@ -199,17 +199,25 @@ class DelimitedDataReader(
         return None
 
     def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
-        """Yield only lines in an iterator that do not start with a comment prefix."""
+        """Yield lines, skipping blank lines and comments, and sending comments to on_comment.
+
+        A blank line holds only whitespace and no delimiter. Only a line that starts a record is
+        skipped, so a quoted field keeps every line it holds.
+        """
         prefixes = self._comment_prefixes
+        delimiter = self.delimiter
+        yielded = 0
         for line in lines:
             self._line_count += 1
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if prefixes and stripped.startswith(prefixes):
-                if self._on_comment is not None:
-                    self._on_comment(Comment(self._line_count, line.rstrip("\r\n")))
-                continue
+            if yielded == self._record_end:
+                text = line.rstrip("\r\n")
+                if not text.strip() and delimiter not in text:
+                    continue
+                if prefixes and text.startswith(prefixes):
+                    if self._on_comment is not None:
+                        self._on_comment(Comment(self._line_count, text))
+                    continue
+            yielded += 1
             yield line
 
     def _field_reader(
@@ -273,7 +281,9 @@ class DelimitedDataReader(
         field_readers = self._field_readers
         extra_field = self._extra_field
         counters = self._counters
-        for row in self._rows:
+        rows = self._rows
+        for row in rows:
+            self._record_end = rows.line_num
             if len(row) != width and (extra_field is None or len(row) < width):
                 at_least = "" if extra_field is None else "at least "
                 raise ValueError(
