@@ -309,27 +309,125 @@ def test_other_fields_keep_their_codecs_hooks_and_none_field(tmp_path: Path) -> 
     ]
 
 
-@pytest.mark.parametrize("counted", [int, str, Enum("Plain", {"A": 1})])
-def test_readers_and_writers_refuse_a_counter_of_anything_but_a_str_enum(counted: Any) -> None:
-    """Test that a CounterColumns field must count the members of a StrEnum."""
+@pytest.mark.parametrize(
+    "counted", [int, str, Enum("Numbered", {"A": 1}), Enum("Mixed", {"A": "A", "B": 2})]
+)
+def test_readers_and_writers_refuse_a_counter_of_anything_but_a_text_enum(counted: Any) -> None:
+    """Test that a CounterColumns field must count the members of an Enum whose values are text."""
     record_type = make_dataclass("Bad", [("counts", cast(Any, CounterColumns)[counted])])
 
-    message = r"^The CounterColumns field 'counts' of Bad must count members of a StrEnum!$"
+    message = (
+        r"^The CounterColumns field 'counts' of Bad must count members of an Enum"
+        + r" whose values are text!$"
+    )
     for kind in READERS_AND_WRITERS:
         with pytest.raises(TypeError, match=message):
             _ = kind[record_type](StringIO("A\n"))
 
 
-def test_readers_and_writers_refuse_two_counter_fields() -> None:
-    """Test that a record may have only one CounterColumns field."""
+def test_readers_and_writers_refuse_two_counter_fields_sharing_a_column() -> None:
+    """Test that two CounterColumns fields may not both have a column of the same name."""
     record_type = make_dataclass(
         "Bad", [("first", CounterColumns[Base]), ("second", CounterColumns[Base])]
     )
 
-    message = r"^Bad may have only one CounterColumns field, but has 'first' and 'second'!$"
+    message = r"^The CounterColumns fields 'first' and 'second' of Bad both have a column 'A'!$"
     for kind in READERS_AND_WRITERS:
         with pytest.raises(TypeError, match=message):
             _ = kind[record_type](StringIO("A\n"))
+
+
+class Quality(Enum):
+    """Base qualities in bins, a plain Enum whose values are text."""
+
+    LOW = "low"
+    HIGH = "high"
+
+
+class Strand(str, Enum):
+    """Strands, a text Enum mixin."""
+
+    PLUS = "plus"
+    MINUS = "minus"
+
+
+@dataclass(frozen=True)
+class Tally:
+    """A record with three Counter fields over different kinds of text enums."""
+
+    name: str
+    bases: CounterColumns[Base]
+    qualities: CounterColumns[Quality]
+    strands: CounterColumns[Strand]
+
+
+def test_records_may_have_several_counter_fields_over_any_text_enum(tmp_path: Path) -> None:
+    """Test that several Counter fields over plain, mixin and StrEnum enums round-trip."""
+    path = tmp_path / "tally.tsv"
+    record = Tally(
+        "site1",
+        Counter({Base.A: 1, Base.T: 2}),
+        Counter({Quality.HIGH: 3}),
+        Counter({Strand.PLUS: 1, Strand.MINUS: 2}),
+    )
+
+    with TsvWriter.from_path[Tally](path) as writer:
+        writer.write_header()
+        writer.write(record)
+
+    assert path.read_text() == (
+        "name\tA\tC\tG\tT\tlow\thigh\tplus\tminus\nsite1\t1\t0\t0\t2\t0\t3\t1\t2\n"
+    )
+    with TsvReader.from_path[Tally](path) as reader:
+        assert list(reader) == [record]
+    with TsvReader.from_path[Tally](path) as reader:
+        (read,) = list(reader)
+        assert all(type(member) is Quality for member in read.qualities)
+
+
+def test_several_counter_fields_are_found_by_name_in_any_order(tmp_path: Path) -> None:
+    """Test that the columns of several Counter fields may be mixed in any order in a header."""
+    path = tmp_path / "tally.tsv"
+    _ = path.write_text("high\tT\tminus\tname\tA\tlow\tC\tplus\tG\n3\t2\t2\tsite1\t1\t0\t0\t1\t0\n")
+
+    with TsvReader.from_path[Tally](path) as reader:
+        assert list(reader) == [
+            Tally(
+                "site1",
+                Counter({Base.A: 1, Base.T: 2}),
+                Counter({Quality.HIGH: 3}),
+                Counter({Strand.PLUS: 1, Strand.MINUS: 2}),
+            )
+        ]
+
+
+def test_several_counter_fields_are_read_without_a_header() -> None:
+    """Test that without a header each Counter field's columns are read at its place."""
+    with TsvReader[Tally](StringIO("site1\t1\t0\t0\t2\t0\t3\t1\t2\n"), header=False) as reader:
+        (record,) = list(reader)
+
+    assert record.qualities == Counter({Quality.HIGH: 3})
+    assert record.strands == Counter({Strand.PLUS: 1, Strand.MINUS: 2})
+
+
+def test_writer_accepts_the_text_of_a_plain_enum_member_as_a_key() -> None:
+    """Test that a plain Enum member's text counts as that member when writing."""
+    handle = StringIO()
+    record = Tally("site1", Counter(), cast(Counter[Quality], Counter({"high": 4})), Counter())
+
+    TsvWriter[Tally](handle).write(record)
+
+    assert handle.getvalue() == "site1\t0\t0\t0\t0\t0\t4\t0\t0\n"
+
+
+def test_writer_refuses_a_member_counted_twice() -> None:
+    """Test that a Counter holding both a plain Enum member and its text is refused."""
+    counts = cast(Counter[Quality], Counter({Quality.HIGH: 1, "high": 2}))
+    record = Tally("site1", Counter(), counts, Counter())
+
+    message = r"^Could not write field 'qualities', which counts 'high' twice!$"
+    with pytest.raises(ValueError, match=message):
+        TsvWriter[Tally](StringIO()).write(record)
 
 
 def test_readers_and_writers_refuse_a_member_named_like_a_field() -> None:

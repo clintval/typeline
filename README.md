@@ -173,7 +173,8 @@ Without quoting, a writer refuses text that holds the delimiter or a line break 
 
 ### Counter Columns
 
-A `CounterColumns[E]` field is a `Counter[E]` held in one column per member of the `StrEnum` `E`, each named after its member's value.
+A `CounterColumns[E]` field is a `Counter[E]` held in one column per member of the enum `E`, each named after its member's value, which must be text.
+A record may have several such fields, as long as no two columns share a name.
 Writers write every member's count in enum order, where the field sits among the other fields.
 Readers find the member columns by name in a header, wherever they sit, or in enum order at the field's place when there is no header.
 Every member needs a column, and every count must be a non-negative integer.

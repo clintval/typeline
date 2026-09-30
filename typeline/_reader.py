@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
-from enum import StrEnum
+from enum import Enum
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -31,7 +31,7 @@ from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._data_types import RecordType
 from ._data_types import accepts_none
-from ._data_types import counter_columns_field
+from ._data_types import counter_columns_fields
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
@@ -126,28 +126,31 @@ class DelimitedDataReader(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
-        self._counter: tuple[str, type[StrEnum]] | None = counter_columns_field(
+        self._counters: dict[str, type[Enum]] = counter_columns_fields(
             record_type, self._field_type_map
         )
-        counter_field = None if self._counter is None else self._counter[0]
         self._header: list[str] = [
             field.name
             for field in self._fields
-            if field.name not in (self._extra_field, counter_field)
+            if field.name != self._extra_field and field.name not in self._counters
         ]
         self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
-            if name not in (self._extra_field, counter_field)
+            if name != self._extra_field and name not in self._counters
         ]
-        members: dict[str, StrEnum] = (
-            {} if self._counter is None else {member.value: member for member in self._counter[1]}
-        )
+        members: dict[str, tuple[str, Enum]] = {
+            member.value: (name, member) for name, enum in self._counters.items() for member in enum
+        }
         self._columns: list[str] = [
             column
             for field in self._fields
             if field.name != self._extra_field
-            for column in (members if field.name == counter_field else (field.name,))
+            for column in (
+                [member.value for member in self._counters[field.name]]
+                if field.name in self._counters
+                else [field.name]
+            )
         ]
 
         # Read rows as lists, filtering out any comment lines along the way.
@@ -182,10 +185,14 @@ class DelimitedDataReader(
                 )
         layout: list[str] = self._columns if found is None else found
         self._width: int = len(layout)
-        self._member_positions: list[tuple[StrEnum, int]] = [
-            (members[name], index) for index, name in enumerate(layout) if name in members
-        ]
-        if self._member_positions or layout[: len(self._header)] != self._header:
+        self._member_positions: dict[str, list[tuple[Enum, int]]] = {
+            name: [] for name in self._counters
+        }
+        for index, column in enumerate(layout):
+            if column in members:
+                name, member = members[column]
+                self._member_positions[name].append((member, index))
+        if self._counters or layout[: len(self._header)] != self._header:
             self._positions = [layout.index(name) for name in self._header]
             self._extra_positions = [
                 index for index, name in enumerate(layout) if name not in self._columns
@@ -222,10 +229,10 @@ class DelimitedDataReader(
                 continue
             yield line
 
-    def _read_counts(self, row: list[str], name: str, enum: type[StrEnum]) -> Counter[StrEnum]:
-        """Read the count of each member from its column, counting members without one as 0."""
-        counts: Counter[StrEnum] = Counter(dict.fromkeys(enum, 0))
-        for member, index in self._member_positions:
+    def _read_counts(self, row: list[str], name: str, enum: type[Enum]) -> Counter[Enum]:
+        """Read the count of each member of an enum from its column."""
+        counts: Counter[Enum] = Counter(dict.fromkeys(enum, 0))
+        for member, index in self._member_positions[name]:
             text = row[index]
             if not (text.isascii() and text.isdigit()):
                 raise ValueError(
@@ -295,7 +302,7 @@ class DelimitedDataReader(
         extra_positions = self._extra_positions
         field_readers = self._field_readers
         extra_field = self._extra_field
-        counter = self._counter
+        counters = self._counters
         for row in self._rows:
             if len(row) != width and (extra_field is None or len(row) < width):
                 at_least = "" if extra_field is None else "at least "
@@ -313,8 +320,8 @@ class DelimitedDataReader(
             elif extra_field is not None:
                 extra = [row[index] for index in extra_positions]
                 preprocessed[extra_field] = (*extra, *row[width:])
-            if counter is not None:
-                preprocessed[counter[0]] = self._read_counts(row, *counter)
+            for name, enum in counters.items():
+                preprocessed[name] = self._read_counts(row, name, enum)
             try:
                 yield convert(
                     preprocessed,
