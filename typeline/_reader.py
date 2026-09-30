@@ -1,4 +1,5 @@
 import csv
+from collections import Counter
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
@@ -160,15 +161,19 @@ class DelimitedDataReader(
         self._extra_positions: list[int] = []
         found: list[str] | None = next(self._rows, None) if header else None
         self._record_end = self._rows.line_num
+        columns: set[str] = set(self._columns)
         if found is not None:
-            repeated: list[str] = sorted({name for name in found if found.count(name) > 1})
+            repeated: list[str] = sorted(
+                name for name, count in Counter(found).items() if count > 1 and name in columns
+            )
             if repeated:
                 raise ValueError(
                     f"Fields of header repeat a name! Header: {found}."
                     + f" Repeated in header: {repeated}."
                 )
-            missing: list[str] = [name for name in self._columns if name not in found]
-            unexpected: list[str] = [name for name in found if name not in self._columns]
+            present: set[str] = set(found)
+            missing: list[str] = [name for name in self._columns if name not in present]
+            unexpected: list[str] = [name for name in found if name not in columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     "Fields of header do not match fields of dataclass!"
@@ -181,9 +186,10 @@ class DelimitedDataReader(
         self._width: int = len(layout)
         self._counters.locate(layout)
         if self._counters or layout[: len(self._header)] != self._header:
-            self._positions = [layout.index(name) for name in self._header]
+            index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
+            self._positions = [index_of[name] for name in self._header]
             self._extra_positions = [
-                index for index, name in enumerate(layout) if name not in self._columns
+                index for index, name in enumerate(layout) if name not in columns
             ]
 
     @override

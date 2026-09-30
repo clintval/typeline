@@ -1,5 +1,7 @@
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
+from time import perf_counter
 
 import pytest
 
@@ -15,6 +17,14 @@ class Region:
 
     name: str
     start: int
+    extra: ExtraColumns = ()
+
+
+@dataclass(frozen=True)
+class Tagged:
+    """A record with one named field and any number of extra columns."""
+
+    name: str
     extra: ExtraColumns = ()
 
 
@@ -53,3 +63,26 @@ def test_reader_still_counts_fields_on_each_row_of_a_reordered_file(tmp_path: Pa
         pytest.raises(ValueError, match=message),
     ):
         _ = list(reader)
+
+
+def test_extra_columns_may_repeat_a_name() -> None:
+    """Test that columns no field takes may share a name, since they are kept by position."""
+    with TsvReader[Tagged](StringIO("info\tname\tinfo\na\tx\tb\n")) as reader:
+        assert list(reader) == [Tagged("x", ("a", "b"))]
+
+
+def test_a_repeated_field_name_is_refused() -> None:
+    """Test that a header naming a field twice is refused."""
+    with pytest.raises(ValueError, match=r"Repeated in header: \['name'\]\.$"):
+        _ = TsvReader[Tagged](StringIO("name\tinfo\tname\n"))
+
+
+def test_a_wide_header_is_matched_quickly() -> None:
+    """Test that matching a header of many extra columns takes linear time."""
+    names = [f"sample{index}" for index in range(50_000)]
+    header = "\t".join(["name", *names])
+
+    start = perf_counter()
+    _ = TsvReader[Tagged](StringIO(f"{header}\n"))
+
+    assert perf_counter() - start < 1.0
