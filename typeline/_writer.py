@@ -188,6 +188,8 @@ class DelimitedDataWriter(
         ]
         if self._extra_field is not None:
             row.extend(getattr(record, self._extra_field))
+        if not self._quoting and any(map(self._needs_quoting, row)):
+            raise self._unquotable(row)
         try:
             self._writer.writerow(row)
         except csv.Error as exception:
@@ -195,13 +197,17 @@ class DelimitedDataWriter(
                 raise
             raise self._unquotable(row) from exception
 
+    def _needs_quoting(self, text: str) -> bool:
+        """Return whether text holds the delimiter or a line break, and so must be quoted."""
+        return self.delimiter in text or "\n" in text or "\r" in text
+
     def _unquotable(self, row: list[str]) -> ValueError:
         """Explain which field of a row cannot be written without quoting."""
         index, reason = next(
             (
                 (index, f"its text holds the delimiter or a line break: {text!r}")
                 for index, text in enumerate(row)
-                if self.delimiter in text or "\n" in text or "\r" in text
+                if self._needs_quoting(text)
             ),
             (0, "a record of one empty field must be quoted"),
         )
