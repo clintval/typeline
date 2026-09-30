@@ -90,14 +90,15 @@ Leaving the `with` block closes the stream.
 
 ### Decoding a Line
 
-A reader's `decode` reads one record from a line of text, just as the reader reads each record of its file, with its header, delimiter, and other options.
+A reader's `decode` reads one record from a line of text, just as the reader reads each record of its file, with its delimiter and other options.
 It reads nothing from the reader's stream, so one reader can decode many lines, which is much faster than building a reader for each.
+A reader built on an empty stream has no header, so it decodes columns in field order.
 A blank line, a comment, or text holding more than one record is refused with a `ValueError`.
 
 ```pycon
->>> reader = TsvReader[MyData](StringIO("field3\tfield1\tfield2\n"))
+>>> reader = TsvReader[MyData](StringIO())
 >>>
->>> reader.decode("0.2\t10\ttest1\n")
+>>> reader.decode("10\ttest1\t0.2\n")
 MyData(field1=10, field2='test1', field3=0.2)
 
 ```
