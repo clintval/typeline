@@ -214,6 +214,8 @@ class DelimitedDataReader(
         yielded = 0
         for line in lines:
             self._line_count += 1
+            if self._line_count == 1:
+                line = line.removeprefix("\ufeff")
             if yielded == self._record_end:
                 text = line.rstrip("\r\n")
                 if not text.strip() and delimiter not in text:

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from io import StringIO
 from os import linesep
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ import pytest
 
 from typeline import CsvReader
 from typeline import CsvWriter
+from typeline import TsvReader
 
 
 @dataclass
@@ -51,3 +53,14 @@ def test_from_path_writes_utf8_without_translating_line_endings(
 
     assert options == [{"encoding": "utf-8", "newline": ""}]
     assert (tmp_path / "notes.csv").read_bytes() == f"x,é{linesep}".encode()
+
+
+def test_reader_skips_a_byte_order_mark_on_a_stream_it_is_given() -> None:
+    """Test that a byte order mark at the start of a stream the caller opened is skipped."""
+
+    @dataclass
+    class Row:
+        x: str
+
+    with TsvReader[Row](StringIO("﻿x\nvalue\n")) as reader:
+        assert list(reader) == [Row("value")]
