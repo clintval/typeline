@@ -13,6 +13,7 @@ from typing import Callable
 from typing import Generic
 from typing import TextIO
 from typing import cast
+from typing import get_origin
 
 from msgspec import DecodeError
 from msgspec import ValidationError
@@ -26,6 +27,7 @@ from typing_extensions import override
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
 from ._comment import Comment
+from ._counter_columns import CounterFields
 from ._data_types import RecordType
 from ._data_types import accepts_none
 from ._data_types import extra_columns_field
@@ -122,13 +124,22 @@ class DelimitedDataReader(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._header: list[str] = [
-            field.name for field in self._fields if field.name != self._extra_field
+            field.name
+            for field in self._fields
+            if field.name != self._extra_field and field.name not in self._counters
         ]
         self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
-            if name != self._extra_field
+            if name != self._extra_field and name not in self._counters
+        ]
+        self._columns: list[str] = [
+            column
+            for field in self._fields
+            if field.name != self._extra_field
+            for column in self._counters.columns_of(field.name)
         ]
 
         # Read rows as lists, filtering out any comment lines along the way.
@@ -141,7 +152,6 @@ class DelimitedDataReader(
         )
 
         # Match a header's columns to fields by name, so the columns may come in any order.
-        self._width: int = len(self._header)
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
         found: list[str] | None = next(self._rows, None) if header else None
@@ -152,22 +162,24 @@ class DelimitedDataReader(
                     f"Fields of header repeat a name! Header: {found}."
                     + f" Repeated in header: {repeated}."
                 )
-            missing: list[str] = [name for name in self._header if name not in found]
-            unexpected: list[str] = [name for name in found if name not in self._header]
+            missing: list[str] = [name for name in self._columns if name not in found]
+            unexpected: list[str] = [name for name in found if name not in self._columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     "Fields of header do not match fields of dataclass!"
                     + f" Header: {found}."
-                    + f" Fields of {record_type.__name__}: {self._header}."
+                    + f" Fields of {record_type.__name__}: {self._columns}."
                     + (f" Missing from header: {missing}." if missing else "")
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
-            self._width = len(found)
-            if found[: len(self._header)] != self._header:
-                self._positions = [found.index(name) for name in self._header]
-                self._extra_positions = [
-                    index for index in range(len(found)) if index not in self._positions
-                ]
+        layout: list[str] = self._columns if found is None else found
+        self._width: int = len(layout)
+        self._counters.locate(layout)
+        if self._counters or layout[: len(self._header)] != self._header:
+            self._positions = [layout.index(name) for name in self._header]
+            self._extra_positions = [
+                index for index, name in enumerate(layout) if name not in self._columns
+            ]
 
     @override
     def __enter__(self) -> Self:
@@ -244,7 +256,8 @@ class DelimitedDataReader(
 
     def _convert_hook(self, type_: Any, obj: Any) -> Any:
         """Pass through values a codec already built, and hand other custom types to dec_hook."""
-        if isinstance(type_, type) and isinstance(obj, type_):
+        kind = get_origin(type_) or type_
+        if isinstance(kind, type) and isinstance(obj, kind):
             return obj
         if self._dec_hook is not None:
             return self._dec_hook(type_, obj)
@@ -259,6 +272,7 @@ class DelimitedDataReader(
         extra_positions = self._extra_positions
         field_readers = self._field_readers
         extra_field = self._extra_field
+        counters = self._counters
         for row in self._rows:
             if len(row) != width and (extra_field is None or len(row) < width):
                 at_least = "" if extra_field is None else "at least "
@@ -276,6 +290,8 @@ class DelimitedDataReader(
             elif extra_field is not None:
                 extra = [row[index] for index in extra_positions]
                 preprocessed[extra_field] = (*extra, *row[width:])
+            if counters:
+                preprocessed.update(counters.read(row, self._line_count))
             try:
                 yield convert(
                     preprocessed,

@@ -25,6 +25,7 @@ from typing_extensions import override
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
 from ._comment import Comment
+from ._counter_columns import CounterFields
 from ._data_types import RecordType
 from ._data_types import extra_columns_field
 from ._data_types import field_types
@@ -104,8 +105,12 @@ class DelimitedDataWriter(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._header: tuple[str, ...] = tuple(
-            field.name for field in self._fields if field.name != self._extra_field
+            column
+            for field in self._fields
+            if field.name != self._extra_field
+            for column in self._counters.columns_of(field.name)
         )
         self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
             (name, find_codec(field_type, codecs))
@@ -183,9 +188,13 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        row = [
-            self._format(name, getattr(record, name), codec) for name, codec in self._field_codecs
-        ]
+        counters = self._counters
+        row: list[str] = []
+        for name, codec in self._field_codecs:
+            if name in counters:
+                row.extend(counters.write(name, getattr(record, name)))
+            else:
+                row.append(self._format(name, getattr(record, name), codec))
         if self._extra_field is not None:
             row.extend(getattr(record, self._extra_field))
         if not self._quoting and any(map(self._needs_quoting, row)):
