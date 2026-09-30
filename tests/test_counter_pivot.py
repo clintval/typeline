@@ -443,3 +443,13 @@ def test_readers_and_writers_refuse_a_member_named_like_a_field() -> None:
     for kind in READERS_AND_WRITERS:
         with pytest.raises(TypeError, match=message):
             _ = kind[record_type](StringIO("name\n"))
+
+
+def test_readers_and_writers_refuse_an_optional_counter_field() -> None:
+    """Test that an optional CounterColumns field is refused rather than read as one column."""
+    record_type = make_dataclass("Bad", [("counts", CounterColumns[Base] | None)])
+
+    message = r"^The CounterColumns field 'counts' of Bad may not be optional!$"
+    for kind in READERS_AND_WRITERS:
+        with pytest.raises(TypeError, match=message):
+            _ = kind[record_type](StringIO("A\n"))

@@ -11,6 +11,7 @@ from typing import get_origin
 from typing_extensions import override
 
 from ._data_types import strip_annotated
+from ._data_types import strip_optional
 
 
 class _CounterColumnsMarker:
@@ -42,6 +43,11 @@ Example:
 """
 
 
+def _is_counter(field_type: Any) -> bool:
+    """Return whether a field's type is a `CounterColumns` type."""
+    return get_origin(field_type) is Annotated and COUNTER_COLUMNS_MARKER in get_args(field_type)
+
+
 class CounterFields:
     """The `CounterColumns` fields of a record, and how their member columns are read and written.
 
@@ -53,9 +59,12 @@ class CounterFields:
         self._enums: dict[str, type[Enum]] = {}
         self._by_column: dict[str, tuple[str, Enum]] = {}
         for name, field_type in field_type_map.items():
-            if get_origin(field_type) is Annotated and COUNTER_COLUMNS_MARKER in get_args(
-                field_type
-            ):
+            if _is_counter(strip_optional(field_type)) and not _is_counter(field_type):
+                raise TypeError(
+                    f"The CounterColumns field '{name}' of {record_type.__name__}"
+                    + " may not be optional!"
+                )
+            if _is_counter(field_type):
                 self._enums[name] = self._enum_of(record_type, name, field_type)
                 for member in self._enums[name]:
                     self._claim(record_type, name, member, field_type_map)
