@@ -73,6 +73,9 @@ class CounterFields:
             for name, enum in self._enums.items()
         }
         self._positions: dict[str, list[tuple[Enum, int]]] = {name: [] for name in self._enums}
+        self._zeros: dict[str, dict[Enum, int]] = {
+            name: dict.fromkeys(enum, 0) for name, enum in self._enums.items()
+        }
 
     def __bool__(self) -> bool:
         """Return whether the record has any `CounterColumns` field."""
@@ -122,8 +125,7 @@ class CounterFields:
 
     def locate(self, layout: list[str]) -> None:
         """Find where each member's column is in the columns of the data."""
-        for positions in self._positions.values():
-            positions.clear()
+        self._positions = {name: [] for name in self._enums}
         for index, column in enumerate(layout):
             if column in self._by_column:
                 name, member = self._by_column[column]
@@ -132,8 +134,8 @@ class CounterFields:
     def read(self, row: list[str], line_number: int) -> dict[str, Counter[Enum]]:
         """Read the count of each member of each field from its column in a row."""
         counters: dict[str, Counter[Enum]] = {}
-        for name, enum in self._enums.items():
-            counts: Counter[Enum] = Counter(dict.fromkeys(enum, 0))
+        for name, zeros in self._zeros.items():
+            counts: Counter[Enum] = Counter(zeros)
             for member, index in self._positions[name]:
                 text = row[index]
                 if not (text.isascii() and text.isdigit()):

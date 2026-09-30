@@ -4,8 +4,6 @@ from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
-from dataclasses import Field
-from dataclasses import fields as fields_of
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -127,25 +125,20 @@ class DelimitedDataReader(
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
 
         # Inspect the record type, and decide once how each field is read from its text.
-        self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
-        self._header: list[str] = [
-            field.name
-            for field in self._fields
-            if field.name != self._extra_field and field.name not in self._counters
-        ]
         self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
             if name != self._extra_field and name not in self._counters
         ]
+        self._header: list[str] = [name for name, _ in self._field_readers]
         self._columns: list[str] = [
             column
-            for field in self._fields
-            if field.name != self._extra_field
-            for column in self._counters.columns_of(field.name)
+            for name in self._field_type_map
+            if name != self._extra_field
+            for column in self._counters.columns_of(name)
         ]
 
         # Read rows as lists, filtering out blank and comment lines between records.
@@ -271,7 +264,7 @@ class DelimitedDataReader(
             stripped = text.strip()
             if stripped in JSON_LITERAL_KEYWORDS or (stripped and stripped[0] in "{["):
                 try:
-                    return decode(text.encode("utf-8"))
+                    return decode(text)
                 except DecodeError:
                     return text
             return text
@@ -342,7 +335,6 @@ class DelimitedDataReader(
     def close(self) -> None:
         """Close all opened resources."""
         self._handle.close()
-        return None
 
     @SubscriptableClassmethod
     @classmethod

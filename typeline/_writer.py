@@ -2,8 +2,6 @@ import csv
 import re
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
-from dataclasses import Field
-from dataclasses import fields as fields_of
 from io import StringIO
 from math import isfinite
 from os import linesep
@@ -112,18 +110,17 @@ class DelimitedDataWriter(
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
 
         # Inspect the record type and save the fields and field names.
-        self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._header: tuple[str, ...] = tuple(
             column
-            for field in self._fields
-            if field.name != self._extra_field
-            for column in self._counters.columns_of(field.name)
+            for name in self._field_type_map
+            if name != self._extra_field
+            for column in self._counters.columns_of(name)
         )
-        self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
-            (name, find_codec(field_type, codecs))
+        self._field_codecs: list[tuple[str, FieldCodec[Any] | None, bool]] = [
+            (name, find_codec(field_type, codecs), name in self._counters)
             for name, field_type in self._field_type_map.items()
             if name != self._extra_field
         ]
@@ -207,8 +204,8 @@ class DelimitedDataWriter(
             )
         counters = self._counters
         row: list[str] = []
-        for name, codec in self._field_codecs:
-            if name in counters:
+        for name, codec, is_counter in self._field_codecs:
+            if is_counter:
                 row.extend(counters.write(name, getattr(record, name)))
             else:
                 row.append(self._format(name, getattr(record, name), codec))
