@@ -1,8 +1,6 @@
-from collections import Counter
 from collections.abc import Mapping
 from dataclasses import Field
 from dataclasses import fields
-from enum import Enum
 from types import NoneType
 from types import UnionType
 from typing import TYPE_CHECKING
@@ -141,71 +139,3 @@ def extra_columns_field(record_type: type[Any], field_type_map: dict[str, Any]) 
             + f" but '{misplaced[0]}' is not!"
         )
     return last
-
-
-class _CounterColumnsMarker:
-    """Marks the field of a record that counts the members of an enum, one column per member."""
-
-    @override
-    def __repr__(self) -> str:
-        return "CounterColumns"
-
-
-COUNTER_COLUMNS_MARKER = _CounterColumnsMarker()
-"""The marker in `CounterColumns` that readers and writers look for."""
-
-MemberType = TypeVar("MemberType", bound=Enum)
-"""The type variable for the enum whose members a `CounterColumns` field counts."""
-
-CounterColumns: TypeAlias = Annotated[Counter[MemberType], COUNTER_COLUMNS_MARKER]
-"""The type of a record's field that counts each member of an enum in a column named after it.
-
-The enum's values must be text, as with a `StrEnum`, and name the columns.
-
-Example:
-    ```python
-    @dataclass
-    class Pileup:
-        name: str
-        counts: CounterColumns[Base]
-    ```
-"""
-
-
-def counter_columns_fields(
-    record_type: type[Any], field_type_map: dict[str, Any]
-) -> dict[str, type[Enum]]:
-    """Return each of a record's `CounterColumns` fields, by name, with the enum it counts."""
-    counters: dict[str, type[Enum]] = {}
-    owners: dict[str, str] = {}
-    for name, field_type in field_type_map.items():
-        if get_origin(field_type) is not Annotated or COUNTER_COLUMNS_MARKER not in get_args(
-            field_type
-        ):
-            continue
-        members = get_args(strip_annotated(field_type))
-        enum = members[0] if len(members) == 1 else None
-        if (
-            not isinstance(enum, type)
-            or not issubclass(enum, Enum)
-            or not all(isinstance(member.value, str) for member in enum)
-        ):
-            raise TypeError(
-                f"The CounterColumns field '{name}' of {record_type.__name__}"
-                + " must count members of an Enum whose values are text!"
-            )
-        for member in enum:
-            column: str = member.value
-            if column in field_type_map:
-                raise TypeError(
-                    f"The CounterColumns field '{name}' of {record_type.__name__}"
-                    + f" has a column '{column}' named like a field!"
-                )
-            if column in owners:
-                raise TypeError(
-                    f"The CounterColumns fields '{owners[column]}' and '{name}'"
-                    + f" of {record_type.__name__} both have a column '{column}'!"
-                )
-            owners[column] = name
-        counters[name] = enum
-    return counters

@@ -4,7 +4,6 @@ from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
-from enum import Enum
 from inspect import Parameter
 from inspect import signature
 from os import linesep
@@ -26,8 +25,8 @@ from typing_extensions import override
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
 from ._comment import Comment
+from ._counter_columns import CounterFields
 from ._data_types import RecordType
-from ._data_types import counter_columns_fields
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
@@ -106,18 +105,12 @@ class DelimitedDataWriter(
         self._fields: tuple[Field[Any], ...] = fields_of(record_type)
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
-        self._counters: dict[str, type[Enum]] = counter_columns_fields(
-            record_type, self._field_type_map
-        )
-        self._members_by_key: dict[str, dict[object, Enum]] = {
-            name: {key: member for member in enum for key in (member, member.value)}
-            for name, enum in self._counters.items()
-        }
+        self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._header: tuple[str, ...] = tuple(
             column
             for field in self._fields
             if field.name != self._extra_field
-            for column in self._columns_of(field.name)
+            for column in self._counters.columns_of(field.name)
         )
         self._field_codecs: list[tuple[str, FieldCodec[Any] | None]] = [
             (name, find_codec(field_type, codecs))
@@ -153,40 +146,6 @@ class DelimitedDataWriter(
         """Exit this context while closing all open resources."""
         self.close()
         return None
-
-    def _columns_of(self, field_name: str) -> tuple[str, ...]:
-        """Return the columns a field is written into: one per member for a Counter field."""
-        if field_name in self._counters:
-            return tuple(member.value for member in self._counters[field_name])
-        return (field_name,)
-
-    def _format_counts(self, counts: Mapping[Any, object], name: str) -> list[str]:
-        """Write the count of each member of a Counter field in enum order, 0 when absent."""
-        enum = self._counters[name]
-        members_by_key = self._members_by_key[name]
-        by_member: dict[Enum, object] = {}
-        for key, count in counts.items():
-            member = members_by_key.get(key)
-            if member is None:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts '{key}'"
-                    + f" that is not a member of {enum.__name__}!"
-                )
-            if member in by_member:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts '{member.value}' twice!"
-                )
-            by_member[member] = count
-        texts: list[str] = []
-        for member in enum:
-            count = by_member.get(member, 0)
-            if type(count) is not int or count < 0:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts {count!r} of '{member.value}'"
-                    + "; counts must be non-negative integers!"
-                )
-            texts.append(str(count))
-        return texts
 
     def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
         """Write the value of one field into its text."""
@@ -233,7 +192,7 @@ class DelimitedDataWriter(
         row: list[str] = []
         for name, codec in self._field_codecs:
             if name in counters:
-                row.extend(self._format_counts(getattr(record, name), name))
+                row.extend(counters.write(name, getattr(record, name)))
             else:
                 row.append(self._format(name, getattr(record, name), codec))
         if self._extra_field is not None:
