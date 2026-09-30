@@ -175,10 +175,14 @@ class DelimitedDataWriter(
         if kind is float and isinstance(value, float):
             return self._encoder.encode(value).decode("utf-8") if isfinite(value) else repr(value)
 
-        builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
-        if isinstance(builtin, str):
-            return builtin
-        return self._encoder.encode(builtin).decode("utf-8")
+        try:
+            builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
+            return builtin if isinstance(builtin, str) else self._encoder.encode(builtin).decode()
+        except (TypeError, ValueError) as exception:
+            field_type = type_name(self._field_type_map[field_name])
+            raise ValueError(
+                f"Could not write field '{field_name}' of type {field_type}!"
+            ) from exception
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.

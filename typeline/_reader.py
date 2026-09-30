@@ -269,7 +269,7 @@ class DelimitedDataReader(
             return obj
         if self._dec_hook is not None:
             return self._dec_hook(type_, obj)
-        raise NotImplementedError(f"No dec_hook to convert into {type_name(type_)}.")
+        raise TypeError(f"Expected {type_name(type_)}, got {type(obj).__name__}")
 
     @override
     def __iter__(self) -> Iterator[RecordType]:

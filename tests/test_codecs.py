@@ -6,12 +6,14 @@ from typing import Any
 from typing import Optional
 
 import pytest
+from msgspec import ValidationError
 
 from typeline import Codecs
 from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import FieldCodec
 from typeline import TsvReader
+from typeline import TsvWriter
 from typeline.codecs import boolean
 from typeline.codecs import delimited
 from typeline.codecs import key_value
@@ -448,3 +450,29 @@ def test_delimited_writes_empty_items_before_the_last() -> None:
 
     assert codec.into_text(["", "a"]) == ",a"
     assert codec.from_text(",a") == ["", "a"]
+
+
+class Opaque:
+    """A custom type with no codec and no hook."""
+
+
+@dataclass
+class Holder:
+    """A record holding a custom type."""
+
+    thing: Opaque
+
+
+def test_reading_a_custom_type_without_a_codec_or_hook_names_the_field() -> None:
+    """Test that a custom type with no way to read it raises a ValidationError naming the field."""
+    with (
+        TsvReader[Holder](StringIO("x\n"), header=False) as reader,
+        pytest.raises(ValidationError, match=r"Expected Opaque, got str - at `\$\.thing`"),
+    ):
+        _ = list(reader)
+
+
+def test_writing_a_custom_type_without_a_codec_or_hook_names_the_field() -> None:
+    """Test that a custom type with no way to write it raises a ValueError naming the field."""
+    with pytest.raises(ValueError, match=r"^Could not write field 'thing' of type Opaque!$"):
+        TsvWriter[Holder](StringIO()).write(Holder(Opaque()))
