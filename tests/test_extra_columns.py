@@ -44,7 +44,7 @@ def test_reader_refuses_a_line_without_the_named_fields(tmp_path: Path) -> None:
     path = tmp_path / "regions.tsv"
     _ = path.write_text("a\n")
 
-    message = r"^Expected at least 2 fields but found 1 on line 1 for record type: Region\.$"
+    message = r"^Expected at least 2 columns but found 1 on line 1 for record type: Region\.$"
     with (
         TsvReader.from_path[Region](path, header=False) as reader,
         pytest.raises(ValueError, match=message),

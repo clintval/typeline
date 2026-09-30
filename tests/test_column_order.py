@@ -48,7 +48,7 @@ def test_reader_refuses_a_header_that_repeats_a_column(tmp_path: Path) -> None:
     """Test that a header naming a column twice is refused, since the column would be ambiguous."""
     (tmp_path / "test.tsv").write_text("field1\tfield2\tfield3\tfield1\n")
 
-    message = r"^Fields of header repeat a name! Header: .* Repeated in header: \['field1'\]\.$"
+    message = r"^Columns of header repeat a name on line 1! .* Repeated in header: \['field1'\]\.$"
     with pytest.raises(ValueError, match=message):
         _ = TsvReader.from_path[SimpleMetric](tmp_path / "test.tsv")
 
@@ -57,7 +57,7 @@ def test_reader_still_counts_fields_on_each_row_of_a_reordered_file(tmp_path: Pa
     """Test that a row of a reordered file with the wrong number of fields is still reported."""
     (tmp_path / "test.tsv").write_text("field3\tfield1\tfield2\n0.2\t1\n")
 
-    message = r"^Expected 3 fields but found 2 on line 2 for record type: SimpleMetric\.$"
+    message = r"^Expected 3 columns but found 2 on line 2 for record type: SimpleMetric\.$"
     with (
         TsvReader.from_path[SimpleMetric](tmp_path / "test.tsv") as reader,
         pytest.raises(ValueError, match=message),

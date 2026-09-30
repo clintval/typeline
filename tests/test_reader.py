@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+from io import StringIO
 from pathlib import Path
 from typing import Literal
 from typing import NewType
@@ -76,7 +77,7 @@ def test_reader_raises_exception_when_header_is_wrong(tmp_path: Path) -> None:
     """Test that the reader will raise an exception when the header is wrong."""
     (tmp_path / "test.txt").write_text("field10,field11,field13\n")
 
-    with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
+    with pytest.raises(ValueError, match="Columns of header do not match fields of "):
         CsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
 
@@ -169,7 +170,7 @@ def test_csv_reader_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
     [
         pytest.param(
             "field1\tfield2",
-            "Header: ['field1', 'field2']. Fields of SimpleMetric: ['field1', 'field2', 'field3']."
+            "Header: ['field1', 'field2']. Columns of SimpleMetric: ['field1', 'field2', 'field3']."
             + " Missing from header: ['field3'].",
             id="missing",
         ),
@@ -194,7 +195,7 @@ def test_reader_names_how_the_header_differs_from_the_dataclass(
     with pytest.raises(ValueError) as exception:
         TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
-    assert str(exception.value).startswith("Fields of header do not match fields of dataclass!")
+    assert str(exception.value).startswith("Columns of header do not match fields of ")
     assert detail in str(exception.value)
 
 
@@ -207,7 +208,7 @@ def test_reader_raises_exception_for_missing_fields(tmp_path: Path) -> None:
         ])
     )
 
-    with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
+    with pytest.raises(ValueError, match="Columns of header do not match fields of "):
         TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
 
@@ -220,7 +221,7 @@ def test_reader_raises_exception_for_extra_fields(tmp_path: Path) -> None:
         ])
     )
 
-    with pytest.raises(ValueError, match="Fields of header do not match fields of dataclass!"):
+    with pytest.raises(ValueError, match="Columns of header do not match fields of "):
         TsvReader.from_path[SimpleMetric](tmp_path / "test.txt")
 
 
@@ -241,7 +242,7 @@ def test_reader_raises_exception_for_a_record_with_the_wrong_number_of_fields(
         TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader,
         pytest.raises(
             ValueError,
-            match=f"Expected 3 fields but found {found} on line 3 for record type: SimpleMetric.",
+            match=f"Expected 3 columns but found {found} on line 3 for record type: SimpleMetric.",
         ),
     ):
         _ = list(reader)
@@ -261,8 +262,8 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
         pytest.raises(
             ValidationError,
             match=(
-                r"Could not parse JSON\-like object into requested structure\:"
-                + r" \{\'field1\'\: \'1\', \'field2\'\: \'name\', \'field3\'\: \'BOMB\'\}\."
+                r"^Could not build SimpleMetric from"
+                + r" \{\'field1\'\: \'1\', \'field2\'\: \'name\', \'field3\'\: \'BOMB\'\}"
             ),
         ),
     ):
@@ -309,10 +310,8 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
         pytest.raises(
             ValidationError,
             match=(
-                r"Could not parse JSON\-like object into requested structure\:"
-                + r" \{\'field1\'\: \'my\-name\'"
-                + r".*\'field2\'\: None\}"
-                + r".*Requested structure\: MyData\."
+                r"^Could not build MyData from \{\'field1\'\: \'my\-name\'"
+                + r".*\'field2\'\: None\} on line 2!"
                 + r".*Expected \`array\`\, got \`null\`"
             ),
         ),
@@ -450,3 +449,31 @@ def test_reader_keeps_text_in_text_like_fields(tmp_path: Path) -> None:
             TextLike(SampleId("true"), "false", Kind.Null),
             TextLike(SampleId("null"), "true", Kind.Listed),
         ]
+
+
+def test_errors_name_the_line_a_record_starts_on() -> None:
+    """Test that an error in a record spanning lines names the line where the record starts."""
+    text = 'field1,field2,field3\n1,"a\nb",x\n'
+    with (
+        CsvReader[SimpleMetric](StringIO(text)) as reader,
+        pytest.raises(ValidationError, match=r"^Could not build SimpleMetric from .* on line 2!"),
+    ):
+        _ = list(reader)
+
+
+def test_a_row_of_the_wrong_width_names_its_columns_and_line() -> None:
+    """Test that a row with too few columns is reported in columns, with its line."""
+    text = "field1,field2,field3\n\n1,a\n"
+    message = r"^Expected 3 columns but found 2 on line 3 for record type: SimpleMetric\.$"
+    with (
+        CsvReader[SimpleMetric](StringIO(text)) as reader,
+        pytest.raises(ValueError, match=message),
+    ):
+        _ = list(reader)
+
+
+def test_a_header_mismatch_names_columns_fields_and_line() -> None:
+    """Test that a header that does not match is reported in columns and fields, with its line."""
+    message = r"^Columns of header do not match fields of SimpleMetric on line 2! Header: "
+    with pytest.raises(ValueError, match=message):
+        _ = CsvReader[SimpleMetric](StringIO("# a comment\nfield1,field2\n"))

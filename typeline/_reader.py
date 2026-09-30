@@ -110,6 +110,7 @@ class DelimitedDataReader(
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
         self._line_count: int = 0
+        self._record_line: int = 0
         self._record_type: type[RecordType] = record_type
         if isinstance(comment_prefixes, str):
             raise TypeError(
@@ -168,17 +169,17 @@ class DelimitedDataReader(
             )
             if repeated:
                 raise ValueError(
-                    f"Fields of header repeat a name! Header: {found}."
-                    + f" Repeated in header: {repeated}."
+                    f"Columns of header repeat a name on line {self._record_line}!"
+                    + f" Header: {found}. Repeated in header: {repeated}."
                 )
             present: set[str] = set(found)
             missing: list[str] = [name for name in self._columns if name not in present]
             unexpected: list[str] = [name for name in found if name not in columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
-                    "Fields of header do not match fields of dataclass!"
-                    + f" Header: {found}."
-                    + f" Fields of {record_type.__name__}: {self._columns}."
+                    f"Columns of header do not match fields of {record_type.__name__}"
+                    + f" on line {self._record_line}! Header: {found}."
+                    + f" Columns of {record_type.__name__}: {self._columns}."
                     + (f" Missing from header: {missing}." if missing else "")
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
@@ -230,6 +231,8 @@ class DelimitedDataReader(
                     if self._on_comment is not None:
                         self._on_comment(Comment(self._line_count, text))
                     continue
+            if yielded == self._record_end:
+                self._record_line = self._line_count
             yielded += 1
             yield line
 
@@ -250,7 +253,7 @@ class DelimitedDataReader(
                 except Exception as exception:
                     raise ValueError(
                         f"Could not read field '{name}' of type {type_name(field_type)} from text"
-                        + f" '{text}' on line {self._line_count}!"
+                        + f" '{text}' on line {self._record_line}!"
                     ) from exception
 
             return read_with_codec
@@ -301,8 +304,8 @@ class DelimitedDataReader(
                 if len(row) != width and (extra_field is None or len(row) < width):
                     at_least = "" if extra_field is None else "at least "
                     raise ValueError(
-                        f"Expected {at_least}{width} fields but found {len(row)} on line"
-                        + f" {self._line_count} for record type: {self._record_type.__name__}."
+                        f"Expected {at_least}{width} columns but found {len(row)} on line"
+                        + f" {self._record_line} for record type: {self._record_type.__name__}."
                     )
                 values = row if positions is None else [row[index] for index in positions]
                 preprocessed = {
@@ -315,7 +318,7 @@ class DelimitedDataReader(
                     extra = [row[index] for index in extra_positions]
                     preprocessed[extra_field] = (*extra, *row[width:])
                 if counters:
-                    preprocessed.update(counters.read(row, self._line_count))
+                    preprocessed.update(counters.read(row, self._record_line))
                 try:
                     yield convert(
                         preprocessed,
@@ -326,10 +329,8 @@ class DelimitedDataReader(
                     )
                 except ValidationError as exception:
                     raise ValidationError(
-                        "Could not parse JSON-like object into requested structure:"
-                        + f" {preprocessed}."
-                        + f" Requested structure: {self._record_type.__name__}."
-                        + f" Original exception: {exception}"
+                        f"Could not build {self._record_type.__name__} from {preprocessed}"
+                        + f" on line {self._record_line}! {exception}"
                     ) from exception
         except Exception:
             if self._close_when_read:
