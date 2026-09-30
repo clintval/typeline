@@ -227,10 +227,10 @@ class DelimitedDataReader(
         none_field = self._none_field if accepts_none(field_type) else None
 
         if codec is not None:
-            missing = codec.missing
+            missing = none_field if codec.missing is None else codec.missing
 
             def read_with_codec(text: str) -> Any:
-                if text == none_field or text == missing:
+                if text == missing:
                     return None
                 try:
                     return codec.from_text(text)

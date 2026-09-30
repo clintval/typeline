@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Annotated
 from typing import Any
@@ -407,3 +408,23 @@ def test_codecs_for_the_plain_type_apply_to_annotated_fields(tmp_path: Path) -> 
 
     with CsvReader.from_path[Shouting](path, header=False, codecs={str: UPPER}) as reader:
         assert list(reader) == [Shouting("hi", "hey", "hello")]
+
+
+@dataclass(frozen=True)
+class Blocks:
+    """A record with optional blocks, where a codec decides how missing blocks look."""
+
+    blocks: list[int] | None
+
+
+def test_a_codec_missing_marker_replaces_the_none_field_on_read() -> None:
+    """Test that with a codec's missing marker, the none field is ordinary text for that codec."""
+    codecs: Codecs = {list[int]: nullable(delimited(int), missing="NA")}
+    handle = StringIO()
+    writer = CsvWriter[Blocks](handle, codecs=codecs)
+    for record in (Blocks([]), Blocks(None), Blocks([1, 2])):
+        writer.write(record)
+
+    assert handle.getvalue() == '""\nNA\n"1,2"\n'
+    with CsvReader[Blocks](StringIO(handle.getvalue()), header=False, codecs=codecs) as reader:
+        assert list(reader) == [Blocks([]), Blocks(None), Blocks([1, 2])]

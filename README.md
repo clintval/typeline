@@ -103,9 +103,10 @@ It writes them when the path ends in `.gz`, `.bz2`, or `.xz`.
 
 ### Missing Values
 
-`None` is written as an empty field.
+`None` is written as the `none_field`, an empty field by default.
 When read, an empty field is `None` if the field allows `None`, and `""` if it is a `str`.
 Set `none_field`, e.g. to `"NA"`, when an optional text field must tell `""` and `None` apart.
+A codec's `missing` text, as `typeline.codecs.nullable` sets, takes the place of `none_field` for its fields.
 
 ### Comments
 

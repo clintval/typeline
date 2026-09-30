@@ -154,7 +154,7 @@ def boolean(true: str = "Y", false: str = "N") -> FieldCodec[bool]:
 
 
 def nullable(codec: FieldCodec[ValueType], missing: str) -> FieldCodec[ValueType | None]:
-    """Build a codec that reads and writes None as a field's own missing text, e.g. `0` for a color.
+    """Build a codec that reads and writes None as a field's own missing text, e.g. `-` for a count.
 
     Example:
         ```pycon
