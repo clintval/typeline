@@ -110,6 +110,11 @@ class DelimitedDataReader(
         self._handle: TextIO = handle
         self._line_count: int = 0
         self._record_type: type[RecordType] = record_type
+        if isinstance(comment_prefixes, str):
+            raise TypeError(
+                "comment_prefixes must be a collection of strings,"
+                + f" not the string {comment_prefixes!r}!"
+            )
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook

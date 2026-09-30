@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from typeline import Comment
 from typeline import CsvReader
@@ -149,3 +152,34 @@ def test_writer_output_with_tricky_text_reads_back() -> None:
         StringIO(handle.getvalue()), header=False, comment_prefixes={"#"}
     ) as reader:
         assert list(reader) == records
+
+
+@pytest.mark.parametrize("kind", [TsvReader, TsvWriter])
+def test_a_string_of_comment_prefixes_is_refused(kind: Any) -> None:
+    """Test that one string given as comment_prefixes is refused, not split into characters."""
+    with pytest.raises(TypeError, match=r"^comment_prefixes must be a collection of strings"):
+        _ = kind[Point](StringIO(), comment_prefixes="//")
+
+
+def test_writer_writes_an_empty_comment_as_a_bare_prefix() -> None:
+    """Test that an empty comment is written as a line holding only the first prefix."""
+    handle = StringIO()
+    TsvWriter[Point](handle).write_comment("")
+
+    assert handle.getvalue() == "#\n"
+
+
+def test_writer_splits_a_comment_only_at_line_breaks_the_reader_knows() -> None:
+    """Test that a comment is split only at the line breaks a reader knows, keeping blank lines."""
+    handle = StringIO()
+    TsvWriter[Point](handle).write_comment("a\x1cb\r\nc\rd\n\ne\n")
+
+    assert handle.getvalue() == "# a\x1cb\n# c\n# d\n#\n# e\n"
+
+
+def test_writer_refuses_a_comment_object_holding_a_line_break() -> None:
+    """Test that a Comment, written as it was read, may not hold a line break."""
+    with pytest.raises(
+        ValueError, match=r"^A Comment is one line, but this one holds a line break"
+    ):
+        TsvWriter[Point](StringIO()).write_comment(Comment(1, "# a\nb"))

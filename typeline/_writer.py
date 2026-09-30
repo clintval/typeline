@@ -1,4 +1,5 @@
 import csv
+import re
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import Field
@@ -58,6 +59,10 @@ class WriterOptions(TypedDict, total=False, closed=True):
     """Whether fields are quoted when needed, as in CSV, or never, as in formats like BED."""
 
 
+LINE_BREAK: re.Pattern[str] = re.compile(r"\r\n|\r|\n")
+"""The line breaks a reader splits lines at."""
+
+
 class DelimitedDataWriter(
     DelimitedData,
     AbstractContextManager["DelimitedDataWriter[RecordType]"],
@@ -96,6 +101,11 @@ class DelimitedDataWriter(
         self._none_field: str = none_field
         self._enc_hook: Callable[[Any], Any] | None = enc_hook
         self._quoting: bool = quoting
+        if isinstance(comment_prefixes, str):
+            raise TypeError(
+                "comment_prefixes must be a collection of strings,"
+                + f" not the string {comment_prefixes!r}!"
+            )
         if not comment_prefixes:
             raise ValueError("comment_prefixes must hold at least one prefix!")
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
@@ -256,10 +266,14 @@ class DelimitedDataWriter(
         starts with one of the writer's comment prefixes, or else after the first prefix.
         """
         if isinstance(comment, Comment):
+            if LINE_BREAK.search(comment.text):
+                raise ValueError(
+                    f"A Comment is one line, but this one holds a line break: {comment.text!r}!"
+                )
             _ = self._handle.write(f"{comment.text}{linesep}")
             return
         prefix = self._comment_prefixes[0]
-        for line in comment.splitlines():
+        for line in LINE_BREAK.split(comment.rstrip("\r\n")):
             text = line if line.startswith(self._comment_prefixes) else f"{prefix} {line}".rstrip()
             _ = self._handle.write(f"{text}{linesep}")
 
