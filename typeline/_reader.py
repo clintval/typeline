@@ -66,6 +66,9 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     on_comment: Callable[[Comment], None] | None
     """Receive each comment line as it is skipped; comments are dropped if None."""
 
+    quoting: bool
+    """Whether `"` quotes fields, as in CSV, or is ordinary text, as in formats like BED."""
+
 
 class DelimitedDataReader(
     DelimitedData,
@@ -86,6 +89,7 @@ class DelimitedDataReader(
         codecs: Codecs = NO_CODECS,
         dec_hook: Callable[[type, Any], Any] | None = None,
         on_comment: Callable[[Comment], None] | None = None,
+        quoting: bool = True,
     ):
         """Instantiate a new delimited data reader.
 
@@ -97,6 +101,7 @@ class DelimitedDataReader(
             codecs: how to read a field from its text, by the field's type.
             dec_hook: decode custom types anywhere in a record, like msgspec's `dec_hook`.
             on_comment: receive each comment line as it is skipped; comments are dropped if None.
+            quoting: whether `"` quotes fields, or is ordinary text.
         """
         record_type = cast(type[RecordType], self._bound_record_type())
 
@@ -130,8 +135,8 @@ class DelimitedDataReader(
             self._filter_out_comments(handle),
             delimiter=self.delimiter,
             lineterminator=linesep,
-            quotechar='"',
-            quoting=csv.QUOTE_MINIMAL,
+            quotechar='"' if quoting else None,
+            quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         )
 
         # Protect the user from the case where a header was specified, but a data line was found!

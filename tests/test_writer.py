@@ -1,5 +1,6 @@
 import csv
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Any
 from typing import Optional
@@ -8,6 +9,8 @@ import pytest
 
 from typeline import CsvReader
 from typeline import CsvWriter
+from typeline import ExtraColumns
+from typeline import TsvReader
 from typeline import TsvWriter
 
 from .conftest import ComplexMetric
@@ -250,3 +253,60 @@ def test_writer_writes_standard_csv_quoting(tmp_path: Path) -> None:
             ["Doe, Jane", 'said "hi"', '["a","b"]'],
             ["O'Brien", "it's fine", "[]"],
         ]
+
+
+@dataclass
+class Feature:
+    """A record of free text written without quoting."""
+
+    name: str
+    notes: str
+    extra: ExtraColumns = ()
+
+
+def test_writer_writes_quotes_as_text_without_quoting(tmp_path: Path) -> None:
+    """Test that without quoting the writer writes quotes as-is, and they read back as text."""
+    records = [Feature('"quoted', 'a"b'), Feature("x", '"', ('say "hi"',))]
+    with TsvWriter.from_path[Feature](tmp_path / "test.tsv", quoting=False) as writer:
+        writer.write_header()
+        for record in records:
+            writer.write(record)
+
+    assert (tmp_path / "test.tsv").read_text() == 'name\tnotes\n"quoted\ta"b\nx\t"\tsay "hi"\n'
+
+    with TsvReader.from_path[Feature](tmp_path / "test.tsv", quoting=False) as reader:
+        assert list(reader) == records
+
+
+@pytest.mark.parametrize("text", ["a\tb", "a\nb", "a\rb"])
+def test_writer_refuses_text_it_cannot_write_without_quoting(text: str) -> None:
+    """Test that without quoting a field holding the delimiter or a line break is refused."""
+    stream = StringIO()
+    writer = TsvWriter[Feature](stream, quoting=False)
+
+    with pytest.raises(ValueError, match="field 'notes' of Feature"):
+        writer.write(Feature("x", text))
+
+    with pytest.raises(ValueError, match="field 'extra' of Feature"):
+        writer.write(Feature("x", "y", ("z", text)))
+
+    assert stream.getvalue() == ""
+
+
+def test_writer_refuses_a_lone_empty_field_without_quoting() -> None:
+    """Test that without quoting a record of one empty field, which must be quoted, is refused."""
+
+    @dataclass
+    class Name:
+        name: str
+
+    with pytest.raises(ValueError, match="field 'name' of Name .* one empty field"):
+        TsvWriter[Name](StringIO(), quoting=False).write(Name(""))
+
+
+def test_writer_writes_the_delimiter_of_another_format_without_quoting(tmp_path: Path) -> None:
+    """Test that without quoting only the writer's own delimiter is refused."""
+    with CsvWriter.from_path[Feature](tmp_path / "test.csv", quoting=False) as writer:
+        writer.write(Feature("a\tb", '"'))
+
+    assert (tmp_path / "test.csv").read_text() == 'a\tb,"\n'

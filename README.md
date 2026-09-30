@@ -145,6 +145,25 @@ Readers fill it, writers write it back, and a header only needs to name the othe
 
 ```
 
+### Turning Off Quoting
+
+Readers and writers quote fields with `"` as CSV does, so text can hold the delimiter and line breaks.
+For formats without quoting, `quoting=False` reads and writes `"` as ordinary text.
+Without quoting, a writer refuses text that holds the delimiter or a line break with a `ValueError`.
+
+```pycon
+>>> with TsvWriter.from_path[Region](temp_file.name, quoting=False) as writer:
+...     writer.write(Region('"exon1', 10, ('say "hi"',)))
+>>>
+>>> print(open(temp_file.name).read(), end="")
+"exon1	10	say "hi"
+>>>
+>>> with TsvReader.from_path[Region](temp_file.name, header=False, quoting=False) as reader:
+...     print(list(reader))
+[Region(name='"exon1', start=10, extra=('say "hi"',))]
+
+```
+
 ### Custom Field Formats
 
 Lists, dicts, sets, enums, and nested dataclasses are written as JSON by default.
