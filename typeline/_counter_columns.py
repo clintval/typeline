@@ -131,7 +131,7 @@ class CounterFields:
                 name, member = self._by_column[column]
                 self._positions[name].append((member, index))
 
-    def read(self, row: list[str], line_number: int) -> dict[str, Counter[Enum]]:
+    def read(self, row: list[str], line_number: int | None) -> dict[str, Counter[Enum]]:
         """Read the count of each member of each field from its column in a row."""
         counters: dict[str, Counter[Enum]] = {}
         for name, zeros in self._zeros.items():
@@ -139,9 +139,10 @@ class CounterFields:
             for member, index in self._positions[name]:
                 text = row[index]
                 if not (text.isascii() and text.isdigit()):
+                    on_line = "" if line_number is None else f" on line {line_number}"
                     raise ValueError(
                         f"Could not read column '{member.value}' of field '{name}' as a count"
-                        + f" from '{text}' on line {line_number}!"
+                        + f" from '{text}'{on_line}!"
                     )
                 counts[member] = int(text)
             counters[name] = counts

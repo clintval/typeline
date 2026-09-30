@@ -4,6 +4,7 @@ from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
+from io import StringIO
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -43,6 +44,11 @@ DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 """JSON literal keywords that require parsing."""
+
+
+def _on_line(line_number: int | None) -> str:
+    """Name the line a record starts on in an error, or nothing when it was not read from a file."""
+    return "" if line_number is None else f" on line {line_number}"
 
 
 class ReaderOptions(TypedDict, total=False, closed=True):
@@ -127,7 +133,7 @@ class DelimitedDataReader(
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
-        self._field_readers: list[tuple[str, Callable[[str], Any] | None]] = [
+        self._field_readers: list[tuple[str, Callable[[str, int | None], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
             if name != self._extra_field and name not in self._counters
@@ -141,13 +147,13 @@ class DelimitedDataReader(
         ]
 
         # Read rows as lists, filtering out blank and comment lines between records.
+        self._dialect: dict[str, Any] = {
+            "delimiter": self.delimiter,
+            "quotechar": '"' if quoting else None,
+            "quoting": csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
+        }
         self._record_end: int = 0
-        self._rows: Any = csv.reader(
-            self._filter_out_comments(handle),
-            delimiter=self.delimiter,
-            quotechar='"' if quoting else None,
-            quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
-        )
+        self._rows: Any = csv.reader(self._filter_out_comments(handle), **self._dialect)
 
         # Match a header's columns to fields by name, so the columns may come in any order.
         self._positions: list[int] | None = None
@@ -184,6 +190,7 @@ class DelimitedDataReader(
             self._extra_positions = [
                 index for index, name in enumerate(layout) if name not in columns
             ]
+        self._read_record: Callable[[list[str], int | None], RecordType] = self._record_reader()
 
     @override
     def __enter__(self) -> Self:
@@ -230,14 +237,14 @@ class DelimitedDataReader(
 
     def _field_reader(
         self, name: str, field_type: Any, codec: FieldCodec[Any] | None
-    ) -> Callable[[str], Any] | None:
+    ) -> Callable[[str, int | None], Any] | None:
         """Decide how a field is read from its text, or return None to keep the text as-is."""
         none_field = self._none_field if accepts_none(field_type) else None
 
         if codec is not None:
             missing = none_field if codec.missing is None else codec.missing
 
-            def read_with_codec(text: str) -> Any:
+            def read_with_codec(text: str, line_number: int | None) -> Any:
                 if text == missing:
                     return None
                 try:
@@ -245,7 +252,7 @@ class DelimitedDataReader(
                 except Exception as exception:
                     raise ValueError(
                         f"Could not read field '{name}' of type {type_name(field_type)} from text"
-                        + f" '{text}' on line {self._record_line}!"
+                        + f" '{text}'{_on_line(line_number)}!"
                     ) from exception
 
             return read_with_codec
@@ -253,11 +260,11 @@ class DelimitedDataReader(
         if is_text(field_type):
             if none_field is None:
                 return None
-            return lambda text: None if text == none_field else text
+            return lambda text, _: None if text == none_field else text
 
         decode = self._json_decoder.decode
 
-        def read_as_json(text: str) -> Any:
+        def read_as_json(text: str, _: int | None) -> Any:
             if text == none_field:
                 return None
             stripped = text.strip()
@@ -279,9 +286,8 @@ class DelimitedDataReader(
             return self._dec_hook(type_, obj)
         raise TypeError(f"Expected {type_name(type_)}, got {type(obj).__name__}")
 
-    @override
-    def __iter__(self) -> Iterator[RecordType]:
-        """Yield converted records from the delimited data file."""
+    def _record_reader(self) -> Callable[[list[str], int | None], RecordType]:
+        """Decide once how a row's columns are built into a record, naming its line in errors."""
         width = self._width
         named = len(self._header)
         positions = self._positions
@@ -290,47 +296,87 @@ class DelimitedDataReader(
         extra_field = self._extra_field
         counters = self._counters
         has_counters = bool(counters)
+        record_type = self._record_type
+        convert_hook = self._convert_hook
+
+        def read_record(row: list[str], line_number: int | None) -> RecordType:
+            if len(row) != width and (extra_field is None or len(row) < width):
+                at_least = "" if extra_field is None else "at least "
+                raise ValueError(
+                    f"Expected {at_least}{width} columns but found {len(row)}"
+                    + f"{_on_line(line_number)} for record type: {record_type.__name__}."
+                )
+            values = row if positions is None else [row[index] for index in positions]
+            preprocessed = {
+                name: text if read is None else read(text, line_number)
+                for (name, read), text in zip(field_readers, values, strict=False)
+            }
+            if extra_field is not None and positions is None:
+                preprocessed[extra_field] = tuple(row[named:])
+            elif extra_field is not None:
+                extra = [row[index] for index in extra_positions]
+                preprocessed[extra_field] = (*extra, *row[width:])
+            if has_counters:
+                preprocessed.update(counters.read(row, line_number))
+            try:
+                return convert(
+                    preprocessed, record_type, strict=False, str_keys=True, dec_hook=convert_hook
+                )
+            except ValidationError as exception:
+                raise ValidationError(
+                    f"Could not build {record_type.__name__} from {preprocessed}"
+                    + f"{_on_line(line_number)}! {exception}"
+                ) from exception
+
+        return read_record
+
+    @override
+    def __iter__(self) -> Iterator[RecordType]:
+        """Yield converted records from the delimited data file."""
+        read_record = self._read_record
         try:
             rows = self._rows
             for row in rows:
                 self._record_end = rows.line_num
-                if len(row) != width and (extra_field is None or len(row) < width):
-                    at_least = "" if extra_field is None else "at least "
-                    raise ValueError(
-                        f"Expected {at_least}{width} columns but found {len(row)} on line"
-                        + f" {self._record_line} for record type: {self._record_type.__name__}."
-                    )
-                values = row if positions is None else [row[index] for index in positions]
-                preprocessed = {
-                    name: text if read is None else read(text)
-                    for (name, read), text in zip(field_readers, values, strict=False)
-                }
-                if extra_field is not None and positions is None:
-                    preprocessed[extra_field] = tuple(row[named:])
-                elif extra_field is not None:
-                    extra = [row[index] for index in extra_positions]
-                    preprocessed[extra_field] = (*extra, *row[width:])
-                if has_counters:
-                    preprocessed.update(counters.read(row, self._record_line))
-                try:
-                    yield convert(
-                        preprocessed,
-                        self._record_type,
-                        strict=False,
-                        str_keys=True,
-                        dec_hook=self._convert_hook,
-                    )
-                except ValidationError as exception:
-                    raise ValidationError(
-                        f"Could not build {self._record_type.__name__} from {preprocessed}"
-                        + f" on line {self._record_line}! {exception}"
-                    ) from exception
+                yield read_record(row, self._record_line)
         except Exception:
             if self._close_when_read:
                 self.close()
             raise
         if self._close_when_read:
             self.close()
+
+    def decode(self, line: str) -> RecordType:
+        """Decode one record from a line of text, just as this reader reads records from its file.
+
+        The line may end with a line break, and a quoted field may hold line breaks.
+        Nothing is read from the reader's handle, so decoding may be mixed with reading records.
+
+        Args:
+            line: the text of one record.
+
+        Raises:
+            ValueError: if the line is blank, is a comment, holds more than one record, or ends
+                inside a quoted field, or if its fields cannot be read into a record.
+        """
+        name = self._record_type.__name__
+        if self.delimiter not in line and not line.strip():
+            raise ValueError(f"Could not decode {name} from blank line {line!r}!")
+        if line.startswith(self._comment_prefixes):
+            raise ValueError(f"Could not decode {name} from comment line {line!r}!")
+        lines = StringIO(line, newline="").readlines()
+        # The empty last line is read only when the text ends inside a quoted field.
+        rows = csv.reader([*lines, ""], **self._dialect)
+        row = next(rows)
+        if rows.line_num > len(lines):
+            raise ValueError(
+                f"Could not decode {name} from {line!r}, which ends inside a quoted field!"
+            )
+        if rows.line_num < len(lines):
+            raise ValueError(
+                f"Could not decode {name} from {line!r}, which holds more than one record!"
+            )
+        return self._read_record(row, None)
 
     def close(self) -> None:
         """Close all opened resources."""
