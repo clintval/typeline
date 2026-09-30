@@ -1,4 +1,5 @@
 import csv
+import math
 from dataclasses import dataclass
 from enum import Enum
 from io import StringIO
@@ -382,3 +383,27 @@ def test_writer_refuses_extra_columns_that_are_not_text() -> None:
         ValueError, match=r"^The ExtraColumns field 'extra' of Feature must hold text"
     ):
         writer.write(Feature("x", "y", cast(tuple[str, ...], (5,))))
+
+
+@dataclass
+class Measure:
+    """A record of a float that may not be finite, and an optional one."""
+
+    value: float
+    maybe: float | None
+
+
+def test_writer_writes_floats_that_are_not_finite_so_they_read_back() -> None:
+    """Test that NaN and infinities are written as text that reads back as the same floats."""
+    records = [Measure(float("inf"), float("-inf")), Measure(float("nan"), None)]
+    handle = StringIO()
+    writer = TsvWriter[Measure](handle)
+    for record in records:
+        writer.write(record)
+
+    assert handle.getvalue() == "inf\t-inf\nnan\t\n"
+    with TsvReader[Measure](StringIO(handle.getvalue()), header=False) as reader:
+        first, second = list(reader)
+    assert first == records[0]
+    assert math.isnan(second.value)
+    assert second.maybe is None

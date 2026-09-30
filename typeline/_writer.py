@@ -6,6 +6,7 @@ from dataclasses import Field
 from dataclasses import fields as fields_of
 from inspect import Parameter
 from inspect import signature
+from math import isfinite
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -173,8 +174,8 @@ class DelimitedDataWriter(
             return str(value)
         if kind is bool:
             return "true" if value else "false"
-        if kind is float:
-            return self._encoder.encode(value).decode("utf-8")
+        if kind is float and isinstance(value, float):
+            return self._encoder.encode(value).decode("utf-8") if isfinite(value) else repr(value)
 
         builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
         if isinstance(builtin, str):
