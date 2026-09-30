@@ -107,7 +107,6 @@ class DelimitedDataReader(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
-        self._line_count: int = 0
         self._record_line: int = 0
         self._record_type: type[RecordType] = record_type
         if isinstance(comment_prefixes, str):
@@ -211,21 +210,21 @@ class DelimitedDataReader(
         """
         prefixes = self._comment_prefixes
         delimiter = self.delimiter
+        on_comment = self._on_comment
+        line_number = 0
         yielded = 0
         for line in lines:
-            self._line_count += 1
-            if self._line_count == 1:
-                line = line.removeprefix("\ufeff")
+            line_number += 1
             if yielded == self._record_end:
-                text = line.rstrip("\r\n")
-                if not text.strip() and delimiter not in text:
+                if line_number == 1:
+                    line = line.removeprefix("\ufeff")
+                if line.isspace() and delimiter not in line:
                     continue
-                if prefixes and text.startswith(prefixes):
-                    if self._on_comment is not None:
-                        self._on_comment(Comment(self._line_count, text))
+                if prefixes and line.startswith(prefixes):
+                    if on_comment is not None:
+                        on_comment(Comment(line_number, line.rstrip("\r\n")))
                     continue
-            if yielded == self._record_end:
-                self._record_line = self._line_count
+                self._record_line = line_number
             yielded += 1
             yield line
 
@@ -290,6 +289,7 @@ class DelimitedDataReader(
         field_readers = self._field_readers
         extra_field = self._extra_field
         counters = self._counters
+        has_counters = bool(counters)
         try:
             rows = self._rows
             for row in rows:
@@ -310,7 +310,7 @@ class DelimitedDataReader(
                 elif extra_field is not None:
                     extra = [row[index] for index in extra_positions]
                     preprocessed[extra_field] = (*extra, *row[width:])
-                if counters:
+                if has_counters:
                     preprocessed.update(counters.read(row, self._record_line))
                 try:
                     yield convert(

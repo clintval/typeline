@@ -202,13 +202,18 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        counters = self._counters
-        row: list[str] = []
-        for name, codec, is_counter in self._field_codecs:
-            if is_counter:
-                row.extend(counters.write(name, getattr(record, name)))
-            else:
-                row.append(self._format(name, getattr(record, name), codec))
+        if self._counters:
+            row: list[str] = []
+            for name, codec, is_counter in self._field_codecs:
+                if is_counter:
+                    row.extend(self._counters.write(name, getattr(record, name)))
+                else:
+                    row.append(self._format(name, getattr(record, name), codec))
+        else:
+            row = [
+                self._format(name, getattr(record, name), codec)
+                for name, codec, _ in self._field_codecs
+            ]
         if self._extra_field is not None:
             extra = getattr(record, self._extra_field)
             if not all(type(text) is str for text in extra):
@@ -217,7 +222,10 @@ class DelimitedDataWriter(
                     + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
                 )
             row.extend(extra)
-        self._write_row(row)
+        if self._quoting and not (row and row[0].startswith(self._comment_prefixes)):
+            self._writer.writerow(row)
+        else:
+            self._write_row(row)
 
     def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
         """Write a row, quoting it whole when its first field would read as a comment."""
