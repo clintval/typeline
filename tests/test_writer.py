@@ -1,12 +1,15 @@
 import csv
 from dataclasses import dataclass
+from enum import Enum
 from io import StringIO
 from pathlib import Path
 from typing import Any
 from typing import Optional
+from typing import cast
 
 import pytest
 
+from typeline import CounterColumns
 from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import ExtraColumns
@@ -310,3 +313,72 @@ def test_writer_writes_the_delimiter_of_another_format_without_quoting(tmp_path:
         writer.write(Feature("a\tb", '"'))
 
     assert (tmp_path / "test.csv").read_text() == 'a\tb,"\n'
+
+
+@dataclass
+class Tagged:
+    """A record whose first field may look like a comment."""
+
+    tag: str
+    value: int
+
+
+def test_writer_quotes_a_row_that_would_read_as_a_comment() -> None:
+    """Test that a row whose first field starts with a comment prefix is quoted, to read back."""
+    handle = StringIO()
+    writer = TsvWriter[Tagged](handle, comment_prefixes=("#", "track"))
+    writer.write(Tagged("#1", 1))
+    writer.write(Tagged("tracking", 2))
+    writer.write(Tagged("plain", 3))
+
+    assert handle.getvalue() == '"#1"\t"1"\n"tracking"\t"2"\nplain\t3\n'
+    comment_prefixes = {"#", "track"}
+    with TsvReader[Tagged](
+        StringIO(handle.getvalue()), header=False, comment_prefixes=comment_prefixes
+    ) as reader:
+        assert list(reader) == [Tagged("#1", 1), Tagged("tracking", 2), Tagged("plain", 3)]
+
+
+def test_writer_refuses_a_row_that_would_read_as_a_comment_without_quoting() -> None:
+    """Test that without quoting a row whose first field starts with a comment prefix is refused."""
+    writer = TsvWriter[Tagged](StringIO(), quoting=False)
+
+    with pytest.raises(ValueError, match=r"field 'tag' of Tagged .* starts with a comment prefix"):
+        writer.write(Tagged("#1", 1))
+
+
+def test_writer_quotes_a_header_that_would_read_as_a_comment() -> None:
+    """Test that a header whose first name starts with a comment prefix is quoted."""
+
+    @dataclass
+    class Region:
+        _chrom: str
+
+    handle = StringIO()
+    TsvWriter[Region](handle, comment_prefixes=("_",)).write_header()
+
+    assert handle.getvalue() == '"_chrom"\n'
+
+
+def test_writer_header_refuses_unquotable_names_without_quoting() -> None:
+    """Test that without quoting a header name holding the delimiter is refused."""
+
+    class Letter(Enum):
+        A = "A\tB"
+
+    @dataclass
+    class Counts:
+        counts: CounterColumns[Letter]
+
+    with pytest.raises(ValueError, match=r"Cannot write field 'A\tB' of Counts without quoting"):
+        TsvWriter[Counts](StringIO(), quoting=False).write_header()
+
+
+def test_writer_refuses_extra_columns_that_are_not_text() -> None:
+    """Test that the values of an ExtraColumns field must be text."""
+    writer = TsvWriter[Feature](StringIO())
+
+    with pytest.raises(
+        ValueError, match=r"^The ExtraColumns field 'extra' of Feature must hold text"
+    ):
+        writer.write(Feature("x", "y", cast(tuple[str, ...], (5,))))

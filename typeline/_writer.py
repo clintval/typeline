@@ -129,6 +129,9 @@ class DelimitedDataWriter(
             quotechar='"' if quoting else None,
             quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         )
+        self._quoting_writer: Any = csv.writer(
+            handle, delimiter=self.delimiter, lineterminator=linesep, quoting=csv.QUOTE_ALL
+        )
 
     @override
     def __enter__(self) -> Self:
@@ -196,21 +199,32 @@ class DelimitedDataWriter(
             else:
                 row.append(self._format(name, getattr(record, name), codec))
         if self._extra_field is not None:
-            row.extend(getattr(record, self._extra_field))
-        if not self._quoting and any(map(self._needs_quoting, row)):
-            raise self._unquotable(row)
-        try:
+            extra = getattr(record, self._extra_field)
+            if not all(type(text) is str for text in extra):
+                raise ValueError(
+                    f"The ExtraColumns field '{self._extra_field}' of"
+                    + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
+                )
+            row.extend(extra)
+        self._write_row(row)
+
+    def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
+        """Write a row, quoting it whole when its first field would read as a comment."""
+        like_comment = bool(row) and row[0].startswith(self._comment_prefixes)
+        if not self._quoting:
+            if like_comment or list(row) == [""] or any(map(self._needs_quoting, row)):
+                raise self._unquotable(row)
             self._writer.writerow(row)
-        except csv.Error as exception:
-            if self._quoting:
-                raise
-            raise self._unquotable(row) from exception
+        elif like_comment:
+            self._quoting_writer.writerow(row)
+        else:
+            self._writer.writerow(row)
 
     def _needs_quoting(self, text: str) -> bool:
         """Return whether text holds the delimiter or a line break, and so must be quoted."""
         return self.delimiter in text or "\n" in text or "\r" in text
 
-    def _unquotable(self, row: list[str]) -> ValueError:
+    def _unquotable(self, row: list[str] | tuple[str, ...]) -> ValueError:
         """Explain which field of a row cannot be written without quoting."""
         index, reason = next(
             (
@@ -218,7 +232,9 @@ class DelimitedDataWriter(
                 for index, text in enumerate(row)
                 if self._needs_quoting(text)
             ),
-            (0, "a record of one empty field must be quoted"),
+            (0, "a record of one empty field must be quoted")
+            if list(row) == [""]
+            else (0, f"its text starts with a comment prefix: {row[0]!r}"),
         )
         name = self._header[index] if index < len(self._header) else self._extra_field
         return ValueError(
@@ -228,7 +244,7 @@ class DelimitedDataWriter(
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object."""
-        self._writer.writerow(self._header)
+        self._write_row(self._header)
 
     def write_comment(self, comment: str | Comment) -> None:
         """Write a comment, e.g. one a reader sent to `on_comment`.
