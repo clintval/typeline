@@ -53,7 +53,7 @@ def delimited(
         item: read each item from its text, e.g. `int`.
         sep: the separator between items.
         trailing_sep: whether to write a separator after the last item, e.g. `1,2,3,`. One is
-            accepted when reading either way.
+            accepted when reading either way, so an empty last item cannot be written.
         container: the collection to build from the items, e.g. `tuple`.
 
     Example:
@@ -72,7 +72,10 @@ def delimited(
         return container([item(part) for part in stripped.split(sep)] if stripped else [])
 
     def into_text(value: Collection[Any]) -> str:
-        text = sep.join(map(str, value))
+        texts = [str(part) for part in value]
+        if texts and not texts[-1]:
+            raise ValueError("Cannot write an empty last item, which reads back as none!")
+        text = sep.join(texts)
         return f"{text}{sep}" if trailing_sep and text else text
 
     return FieldCodec(from_text=from_text, into_text=into_text)

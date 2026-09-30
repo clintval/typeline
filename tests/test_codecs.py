@@ -428,3 +428,23 @@ def test_a_codec_missing_marker_replaces_the_none_field_on_read() -> None:
     assert handle.getvalue() == '""\nNA\n"1,2"\n'
     with CsvReader[Blocks](StringIO(handle.getvalue()), header=False, codecs=codecs) as reader:
         assert list(reader) == [Blocks([]), Blocks(None), Blocks([1, 2])]
+
+
+@pytest.mark.parametrize("items", [["a", ""], [""]])
+@pytest.mark.parametrize("trailing_sep", [False, True])
+def test_delimited_refuses_an_empty_last_item(items: list[str], trailing_sep: bool) -> None:
+    """Test that an empty last item, which would read back as no item, is refused."""
+    codec = delimited(str, trailing_sep=trailing_sep)
+
+    with pytest.raises(
+        ValueError, match=r"^Cannot write an empty last item, which reads back as none!$"
+    ):
+        _ = codec.into_text(items)
+
+
+def test_delimited_writes_empty_items_before_the_last() -> None:
+    """Test that empty items before the last are written and read back."""
+    codec = delimited(str)
+
+    assert codec.into_text(["", "a"]) == ",a"
+    assert codec.from_text(",a") == ["", "a"]
