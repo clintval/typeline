@@ -3,10 +3,11 @@ from io import StringIO
 from pathlib import Path
 from typing import Annotated
 from typing import Any
-from typing import Optional
+from typing import Optional  # pyright: ignore[reportDeprecated]
 
 import pytest
 from msgspec import ValidationError
+from typing_extensions import override
 
 from typeline import Codecs
 from typeline import CsvReader
@@ -34,6 +35,7 @@ class Color:
         r, g, b = text.split(",")
         return cls(int(r), int(g), int(b))
 
+    @override
     def __str__(self) -> str:
         """Write a color into its text, e.g. `101,2,32`."""
         return f"{self.r},{self.g},{self.b}"
@@ -44,13 +46,15 @@ class Interval:
 
     def __init__(self, start: int, end: int) -> None:
         """Build an interval from its start and end."""
-        self.start = start
-        self.end = end
+        self.start: int = start
+        self.end: int = end
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Compare intervals by their start and end."""
         return isinstance(other, Interval) and (self.start, self.end) == (other.start, other.end)
 
+    @override
     def __hash__(self) -> int:
         """Hash an interval by its start and end."""
         return hash((self.start, self.end))
@@ -70,7 +74,7 @@ def enc_hook(obj: Any) -> Any:
     """Encode an Interval into a two-element list."""
     if isinstance(obj, Interval):
         return [obj.start, obj.end]
-    raise NotImplementedError(type(obj))
+    raise NotImplementedError
 
 
 @pytest.mark.parametrize(
@@ -202,7 +206,7 @@ class OldStyleOptional:
     """A record with an optional field written with `Optional`."""
 
     name: str
-    color: Optional[Color]  # noqa: UP045
+    color: Optional[Color]  # noqa: UP045  # pyright: ignore[reportDeprecated]
 
 
 @pytest.mark.parametrize("record_type", [NewStyleOptional, OldStyleOptional])

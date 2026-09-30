@@ -235,3 +235,33 @@ def test_reader_subscripted_with_two_types() -> None:
     """Test that a reader subscripted with more than one type is refused."""
     with pytest.raises(TypeError, match=r"^CsvReader takes one record type, but got 2!"):
         _ = CsvReader[MyData, int]  # type: ignore[type-arg]  # pyright: ignore[reportInvalidTypeArguments]  # ty: ignore[invalid-type-arguments]
+
+
+def test_subscripting_with_a_one_item_tuple_binds_the_same_class() -> None:
+    """Test that a record type given as a one-item tuple binds the same cached class."""
+    reader: Any = CsvReader
+    assert reader[(MyData,)] is CsvReader[MyData]
+
+
+def test_subscripting_a_class_that_has_a_record_type_is_refused() -> None:
+    """Test that a class bound to a record type cannot be bound again."""
+
+    class MyDataReader(TsvReader[MyData]):
+        """A reader subclass of a subscripted reader."""
+
+    reader: Any = MyDataReader
+    with pytest.raises(TypeError, match=r"^MyDataReader already has a record type!$"):
+        _ = reader[MyData]
+
+
+def test_from_path_subscripted_on_a_fixed_reader_advises_no_subscript(csv_path: Path) -> None:
+    """Test that subscripting from_path on a reader fixed to a record type says to drop it."""
+
+    class MyDataReader(CsvReader[MyData], FixedRecordType):
+        """A reader fixed to one record type."""
+
+    from_path: Any = MyDataReader.from_path
+    with pytest.raises(
+        TypeError, match=r"Call MyDataReader\.from_path\(\.\.\.\) without a subscript"
+    ):
+        _ = from_path[MyData](csv_path)

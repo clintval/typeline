@@ -197,3 +197,11 @@ def test_a_default_reader_reads_what_a_default_writer_writes_with_comments() -> 
     with TsvReader[Point](StringIO(handle.getvalue()), on_comment=comments.append) as reader:
         assert list(reader) == [Point(1, 2)]
     assert comments == [Comment(1, "# made by a tool")]
+
+
+def test_reader_skips_comments_and_blank_lines_between_records() -> None:
+    """Test that a reader skips comment lines and blank lines between records."""
+    text = "x,y\n# this is a comment\n#and this is a comment too!\n1,2\n\n  \n3,4\n"
+
+    with CsvReader[Point](StringIO(text)) as reader:
+        assert list(reader) == [Point(1, 2), Point(3, 4)]

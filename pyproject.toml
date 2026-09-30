@@ -132,12 +132,8 @@ enable_error_code           = [
     "possibly-undefined",
 ]
 
-[[tool.mypy.overrides]]
-module = ".conftest"
-ignore_missing_imports = true
-
 [tool.pyright]
-include = ["typeline/", "tests/test_comments.py", "tests/test_compression.py", "tests/test_counter_pivot.py", "tests/test_extra_columns.py", "tests/test_reader_api.py", "tests/test_writer_api.py", "tests/test_real_world_examples.py"]
+include = ["typeline/", "tests/"]
 enableTypeIgnoreComments = false
 reportUnnecessaryTypeIgnoreComment = "error"
 reportImportCycles = false
