@@ -5,6 +5,7 @@ from enum import Enum
 from enum import StrEnum
 from io import StringIO
 from pathlib import Path
+from re import escape
 from typing import Any
 from typing import cast
 
@@ -73,25 +74,38 @@ def test_reader_gathers_member_columns_into_a_counter(tmp_path: Path) -> None:
     assert all(type(member) is Base for member in records[0].counts)
 
 
-def test_reader_counts_absent_members_as_zero(tmp_path: Path) -> None:
-    """Test that members without a column count 0, and member columns may come in any order."""
+def test_reader_refuses_a_header_missing_member_columns(tmp_path: Path) -> None:
+    """Test that every member needs a column, so a misnamed column is never read as a zero count."""
     path = tmp_path / "pileup.tsv"
     _ = path.write_text("name\tT\tA\nsite1\t4\t1\n")
 
-    with TsvReader.from_path[Pileup](path) as reader:
-        (record,) = list(reader)
+    message = (
+        r"^Fields of header do not match fields of dataclass!"
+        + r" Header: \['name', 'T', 'A'\]\."
+        + r" Fields of Pileup: \['name', 'A', 'C', 'G', 'T'\]\."
+        + r" Missing from header: \['C', 'G'\]\.$"
+    )
+    with pytest.raises(ValueError, match=message):
+        _ = TsvReader.from_path[Pileup](path)
 
-    assert record.counts == Counter({Base.A: 1, Base.T: 4})
-    assert dict(record.counts) == {Base.A: 1, Base.C: 0, Base.G: 0, Base.T: 4}
 
-
-def test_reader_counts_every_member_as_zero_without_member_columns(tmp_path: Path) -> None:
-    """Test that a header without any member columns reads a Counter of zeros."""
+def test_reader_refuses_a_header_without_member_columns(tmp_path: Path) -> None:
+    """Test that a header without any member columns is refused."""
     path = tmp_path / "positions.tsv"
     _ = path.write_text("contig\tdepth\nchr1\t7\n")
 
-    with TsvReader.from_path[Position](path) as reader:
-        assert list(reader) == [Position("chr1", Counter(), 7)]
+    message = r"Missing from header: \['A', 'C', 'G', 'T'\]\.$"
+    with pytest.raises(ValueError, match=message):
+        _ = TsvReader.from_path[Position](path)
+
+
+def test_reader_refuses_a_misnamed_member_column_even_with_extra_columns(tmp_path: Path) -> None:
+    """Test that a misnamed member column is refused rather than kept as extra text."""
+    path = tmp_path / "annotated.tsv"
+    _ = path.write_text("name\ta\tC\tG\tT\n")
+
+    with pytest.raises(ValueError, match=r"Missing from header: \['A'\]\. Unexpected"):
+        _ = TsvReader.from_path[Scored](path)
 
 
 def test_reader_reads_fields_after_the_member_columns(tmp_path: Path) -> None:
@@ -113,20 +127,38 @@ def test_reader_reads_fields_after_the_member_columns(tmp_path: Path) -> None:
     ]
 
 
-def test_reader_refuses_to_read_without_a_header() -> None:
-    """Test that a reader refuses a record with a Counter field when told there is no header."""
-    message = r"^The CounterColumns field 'counts' of Pileup needs a header to name its columns!$"
-    with pytest.raises(ValueError, match=message):
-        _ = TsvReader[Pileup](StringIO("site1\t1\t2\t3\t4\n"), header=False)
+def test_reader_reads_member_columns_in_enum_order_without_a_header() -> None:
+    """Test that without a header the member columns are read as the writer writes them."""
+    with TsvReader[Position](StringIO("chr1\t1\t2\t3\t4\t10\n"), header=False) as reader:
+        records = list(reader)
+    with TsvReader[Scored](StringIO("site1\t1\t2\t3\t4\t0.5\n"), header=False) as reader:
+        scored = list(reader)
+
+    counts = Counter({Base.A: 1, Base.C: 2, Base.G: 3, Base.T: 4})
+    assert records == [Position("chr1", counts, 10)]
+    assert scored == [Scored("site1", counts, ("0.5",))]
 
 
-@pytest.mark.parametrize("text", ["", "x", "1.5", "true"])
+def test_round_trip_without_a_header() -> None:
+    """Test that records with a Counter written without a header are read back again."""
+    handle = StringIO()
+    record = Position("chr1", Counter({Base.G: 7}), None)
+    TsvWriter[Position](handle).write(record)
+
+    with TsvReader[Position](StringIO(handle.getvalue()), header=False) as reader:
+        assert list(reader) == [record]
+
+
+@pytest.mark.parametrize("text", ["", "x", "1.5", "true", "-1", "+1", "1_000", " 1", "\u0661"])
 def test_reader_refuses_a_count_that_is_not_an_integer(tmp_path: Path, text: str) -> None:
     """Test that a member column must hold an integer count."""
     path = tmp_path / "pileup.tsv"
-    _ = path.write_text(f"name\tA\tC\nsite1\t1\t2\nsite2\t3\t{text}\n")
+    _ = path.write_text(f"name\tA\tC\tG\tT\nsite1\t1\t2\t3\t4\nsite2\t3\t{text}\t0\t0\n")
 
-    message = rf"^Could not read column 'C' of field 'counts' as a count from '{text}' on line 3!$"
+    message = (
+        r"^Could not read column 'C' of field 'counts' as a count"
+        + rf" from '{escape(text)}' on line 3!$"
+    )
     with (
         TsvReader.from_path[Pileup](path) as reader,
         pytest.raises(ValueError, match=message),
@@ -137,7 +169,7 @@ def test_reader_refuses_a_count_that_is_not_an_integer(tmp_path: Path, text: str
 def test_reader_finds_member_columns_anywhere_in_the_header(tmp_path: Path) -> None:
     """Test that member columns are found by name wherever they sit among the other columns."""
     path = tmp_path / "positions.tsv"
-    _ = path.write_text("G\tdepth\tA\tcontig\tC\n3\t10\t1\tchr1\t2\n")
+    _ = path.write_text("G\tdepth\tA\tT\tcontig\tC\n3\t10\t1\t0\tchr1\t2\n")
 
     with TsvReader.from_path[Position](path) as reader:
         records = list(reader)
@@ -188,6 +220,21 @@ def test_writer_refuses_a_key_that_is_not_a_member() -> None:
         writer.write(Pileup("site1", counts))
 
 
+@pytest.mark.parametrize("count", [1.5, -2, True, "3"])
+def test_writer_refuses_a_count_that_is_not_a_non_negative_integer(count: object) -> None:
+    """Test that the writer refuses a count the reader could not read back."""
+    writer = TsvWriter[Pileup](StringIO())
+    counts: Counter[Base] = Counter()
+    counts[Base.C] = cast(int, count)
+
+    message = (
+        rf"^Could not write field 'counts', which counts {count!r} of 'C'"
+        + r"; counts must be non-negative integers!$"
+    )
+    with pytest.raises(ValueError, match=message):
+        writer.write(Pileup("site1", counts))
+
+
 def test_writer_accepts_member_values_as_keys() -> None:
     """Test that a Counter keyed by a member's text is written as that member's count."""
     handle = StringIO()
@@ -218,7 +265,7 @@ def test_round_trip(tmp_path: Path) -> None:
 def test_extra_columns_are_the_columns_that_are_neither_fields_nor_members(tmp_path: Path) -> None:
     """Test that the columns that are neither fields nor member columns are extra columns."""
     path = tmp_path / "annotated.tsv"
-    _ = path.write_text("name\tC\tA\tscore\tflag\nsite1\t2\t1\t0.5\tPASS\n")
+    _ = path.write_text("name\tC\tA\tG\tT\tscore\tflag\nsite1\t2\t1\t0\t0\t0.5\tPASS\n")
 
     with TsvReader.from_path[Scored](path) as reader:
         records = list(reader)
@@ -229,7 +276,7 @@ def test_extra_columns_are_the_columns_that_are_neither_fields_nor_members(tmp_p
 def test_extra_columns_never_hold_a_member_column(tmp_path: Path) -> None:
     """Test that a member column past an extra column is counted, not kept as extra text."""
     path = tmp_path / "annotated.tsv"
-    _ = path.write_text("name\tA\tscore\tC\nsite1\t1\t0.5\t2\n")
+    _ = path.write_text("name\tA\tscore\tC\tG\tT\nsite1\t1\t0.5\t2\t0\t0\n")
 
     with TsvReader.from_path[Scored](path) as reader:
         records = list(reader)

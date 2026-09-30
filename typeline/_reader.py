@@ -140,11 +140,15 @@ class DelimitedDataReader(
             for name, field_type in self._field_type_map.items()
             if name not in (self._extra_field, counter_field)
         ]
-        if counter_field is not None and not header:
-            raise ValueError(
-                f"The CounterColumns field '{counter_field}' of {record_type.__name__}"
-                + " needs a header to name its columns!"
-            )
+        members: dict[str, StrEnum] = (
+            {} if self._counter is None else {member.value: member for member in self._counter[1]}
+        )
+        self._columns: list[str] = [
+            column
+            for field in self._fields
+            if field.name != self._extra_field
+            for column in (members if field.name == counter_field else (field.name,))
+        ]
 
         # Read rows as lists, filtering out any comment lines along the way.
         self._rows: Iterator[list[str]] = csv.reader(
@@ -156,10 +160,8 @@ class DelimitedDataReader(
         )
 
         # Match a header's columns to fields by name, so the columns may come in any order.
-        self._width: int = len(self._header)
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
-        self._member_positions: list[tuple[StrEnum, int]] = []
         found: list[str] | None = next(self._rows, None) if header else None
         if found is not None:
             repeated: list[str] = sorted({name for name in found if found.count(name) > 1})
@@ -168,30 +170,26 @@ class DelimitedDataReader(
                     f"Fields of header repeat a name! Header: {found}."
                     + f" Repeated in header: {repeated}."
                 )
-            members = {} if self._counter is None else {m.value: m for m in self._counter[1]}
-            missing: list[str] = [name for name in self._header if name not in found]
-            unexpected: list[str] = [
-                name for name in found if name not in self._header and name not in members
-            ]
+            missing: list[str] = [name for name in self._columns if name not in found]
+            unexpected: list[str] = [name for name in found if name not in self._columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     "Fields of header do not match fields of dataclass!"
                     + f" Header: {found}."
-                    + f" Fields of {record_type.__name__}: {self._header}."
+                    + f" Fields of {record_type.__name__}: {self._columns}."
                     + (f" Missing from header: {missing}." if missing else "")
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
-            self._width = len(found)
-            self._member_positions = [
-                (members[name], index) for index, name in enumerate(found) if name in members
+        layout: list[str] = self._columns if found is None else found
+        self._width: int = len(layout)
+        self._member_positions: list[tuple[StrEnum, int]] = [
+            (members[name], index) for index, name in enumerate(layout) if name in members
+        ]
+        if self._member_positions or layout[: len(self._header)] != self._header:
+            self._positions = [layout.index(name) for name in self._header]
+            self._extra_positions = [
+                index for index, name in enumerate(layout) if name not in self._columns
             ]
-            if self._member_positions or found[: len(self._header)] != self._header:
-                self._positions = [found.index(name) for name in self._header]
-                self._extra_positions = [
-                    index
-                    for index, name in enumerate(found)
-                    if name not in self._header and name not in members
-                ]
 
     @override
     def __enter__(self) -> Self:
@@ -229,13 +227,12 @@ class DelimitedDataReader(
         counts: Counter[StrEnum] = Counter(dict.fromkeys(enum, 0))
         for member, index in self._member_positions:
             text = row[index]
-            try:
-                counts[member] = int(text)
-            except ValueError as exception:
+            if not (text.isascii() and text.isdigit()):
                 raise ValueError(
                     f"Could not read column '{member.value}' of field '{name}' as a count"
                     + f" from '{text}' on line {self._line_count}!"
-                ) from exception
+                )
+            counts[member] = int(text)
         return counts
 
     def _field_reader(

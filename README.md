@@ -175,7 +175,8 @@ Without quoting, a writer refuses text that holds the delimiter or a line break 
 
 A `CounterColumns[E]` field is a `Counter[E]` held in one column per member of the `StrEnum` `E`, each named after its member's value.
 Writers write every member's count in enum order, where the field sits among the other fields.
-Readers need a header to find the member columns by name, wherever they sit, and count members without a column as 0.
+Readers find the member columns by name in a header, wherever they sit, or in enum order at the field's place when there is no header.
+Every member needs a column, and every count must be a non-negative integer.
 
 ```pycon
 >>> from collections import Counter
@@ -201,7 +202,7 @@ Readers need a header to find the member columns by name, wherever they sit, and
 position	A	C	G	T
 100	12	0	3	0
 >>>
->>> _ = open(temp_file.name, "w").write("position\tT\tA\n101\t2\t9\n")
+>>> _ = open(temp_file.name, "w").write("position\tT\tG\tC\tA\n101\t2\t0\t0\t9\n")
 >>>
 >>> with TsvReader.from_path[Pileup](temp_file.name) as reader:
 ...     print(list(reader))

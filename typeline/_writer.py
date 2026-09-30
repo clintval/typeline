@@ -169,7 +169,16 @@ class DelimitedDataWriter(
                     f"Could not write field '{name}', which counts '{key}'"
                     + f" that is not a member of {enum.__name__}!"
                 )
-        return [self._format(name, counts.get(member, 0), None) for member in enum]
+        texts: list[str] = []
+        for member in enum:
+            count = counts.get(member, 0)
+            if type(count) is not int or count < 0:
+                raise ValueError(
+                    f"Could not write field '{name}', which counts {count!r} of '{member.value}'"
+                    + "; counts must be non-negative integers!"
+                )
+            texts.append(str(count))
+        return texts
 
     def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
         """Write the value of one field into its text."""
