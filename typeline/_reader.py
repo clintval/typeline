@@ -281,42 +281,47 @@ class DelimitedDataReader(
         field_readers = self._field_readers
         extra_field = self._extra_field
         counters = self._counters
-        rows = self._rows
-        for row in rows:
-            self._record_end = rows.line_num
-            if len(row) != width and (extra_field is None or len(row) < width):
-                at_least = "" if extra_field is None else "at least "
-                raise ValueError(
-                    f"Expected {at_least}{width} fields but found {len(row)} on line"
-                    + f" {self._line_count} for record type: {self._record_type.__name__}."
-                )
-            values = row if positions is None else [row[index] for index in positions]
-            preprocessed = {
-                name: text if read is None else read(text)
-                for (name, read), text in zip(field_readers, values, strict=False)
-            }
-            if extra_field is not None and positions is None:
-                preprocessed[extra_field] = tuple(row[named:])
-            elif extra_field is not None:
-                extra = [row[index] for index in extra_positions]
-                preprocessed[extra_field] = (*extra, *row[width:])
-            if counters:
-                preprocessed.update(counters.read(row, self._line_count))
-            try:
-                yield convert(
-                    preprocessed,
-                    self._record_type,
-                    strict=False,
-                    str_keys=True,
-                    dec_hook=self._convert_hook,
-                )
-            except ValidationError as exception:
-                raise ValidationError(
-                    "Could not parse JSON-like object into requested structure:"
-                    + f" {preprocessed}."
-                    + f" Requested structure: {self._record_type.__name__}."
-                    + f" Original exception: {exception}"
-                ) from exception
+        try:
+            rows = self._rows
+            for row in rows:
+                self._record_end = rows.line_num
+                if len(row) != width and (extra_field is None or len(row) < width):
+                    at_least = "" if extra_field is None else "at least "
+                    raise ValueError(
+                        f"Expected {at_least}{width} fields but found {len(row)} on line"
+                        + f" {self._line_count} for record type: {self._record_type.__name__}."
+                    )
+                values = row if positions is None else [row[index] for index in positions]
+                preprocessed = {
+                    name: text if read is None else read(text)
+                    for (name, read), text in zip(field_readers, values, strict=False)
+                }
+                if extra_field is not None and positions is None:
+                    preprocessed[extra_field] = tuple(row[named:])
+                elif extra_field is not None:
+                    extra = [row[index] for index in extra_positions]
+                    preprocessed[extra_field] = (*extra, *row[width:])
+                if counters:
+                    preprocessed.update(counters.read(row, self._line_count))
+                try:
+                    yield convert(
+                        preprocessed,
+                        self._record_type,
+                        strict=False,
+                        str_keys=True,
+                        dec_hook=self._convert_hook,
+                    )
+                except ValidationError as exception:
+                    raise ValidationError(
+                        "Could not parse JSON-like object into requested structure:"
+                        + f" {preprocessed}."
+                        + f" Requested structure: {self._record_type.__name__}."
+                        + f" Original exception: {exception}"
+                    ) from exception
+        except Exception:
+            if self._close_when_read:
+                self.close()
+            raise
         if self._close_when_read:
             self.close()
 

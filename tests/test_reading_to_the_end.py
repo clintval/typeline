@@ -43,3 +43,26 @@ def test_reader_leaves_a_handle_it_was_given_open_once_read_to_the_end() -> None
 
     assert list(TsvReader[Sample](handle)) == [Sample("tumor", 1200)]
     assert not handle.closed
+
+
+def test_reader_from_a_path_closes_its_file_when_a_record_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that a reader from from_path closes its file when reading a record fails."""
+    path = tmp_path / "samples.tsv"
+    _ = path.write_text("name\treads\ntumor\t1200\nnormal\tmany\n")
+    opened: list[Any] = []
+    original_open = Path.open
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = original_open(self, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", recording_open)
+
+    with pytest.raises(Exception, match="many"):
+        _ = list(TsvReader.from_path[Sample](path))
+
+    assert opened
+    assert all(handle.closed for handle in opened)
