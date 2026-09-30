@@ -4,6 +4,7 @@ from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
+from io import StringIO
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -146,13 +147,13 @@ class DelimitedDataReader(
         ]
 
         # Read rows as lists, filtering out blank and comment lines between records.
+        self._dialect: dict[str, Any] = {
+            "delimiter": self.delimiter,
+            "quotechar": '"' if quoting else None,
+            "quoting": csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
+        }
         self._record_end: int = 0
-        self._rows: Any = csv.reader(
-            self._filter_out_comments(handle),
-            delimiter=self.delimiter,
-            quotechar='"' if quoting else None,
-            quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
-        )
+        self._rows: Any = csv.reader(self._filter_out_comments(handle), **self._dialect)
 
         # Match a header's columns to fields by name, so the columns may come in any order.
         self._positions: list[int] | None = None
@@ -344,6 +345,38 @@ class DelimitedDataReader(
             raise
         if self._close_when_read:
             self.close()
+
+    def decode(self, line: str) -> RecordType:
+        """Decode one record from a line of text, just as this reader reads records from its file.
+
+        The line may end with a line break, and a quoted field may hold line breaks.
+        Nothing is read from the reader's handle, so decoding may be mixed with reading records.
+
+        Args:
+            line: the text of one record.
+
+        Raises:
+            ValueError: if the line is blank, is a comment, holds more than one record, or ends
+                inside a quoted field, or if its fields cannot be read into a record.
+        """
+        name = self._record_type.__name__
+        if self.delimiter not in line and not line.strip():
+            raise ValueError(f"Could not decode {name} from blank line {line!r}!")
+        if line.startswith(self._comment_prefixes):
+            raise ValueError(f"Could not decode {name} from comment line {line!r}!")
+        lines = StringIO(line, newline="").readlines()
+        # The empty last line is read only when the text ends inside a quoted field.
+        rows = csv.reader([*lines, ""], **self._dialect)
+        row = next(rows)
+        if rows.line_num > len(lines):
+            raise ValueError(
+                f"Could not decode {name} from {line!r}, which ends inside a quoted field!"
+            )
+        if rows.line_num < len(lines):
+            raise ValueError(
+                f"Could not decode {name} from {line!r}, which holds more than one record!"
+            )
+        return self._read_record(row, None)
 
     def close(self) -> None:
         """Close all opened resources."""
