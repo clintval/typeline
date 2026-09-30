@@ -211,7 +211,7 @@ position	A	C	G	T
 
 ```
 
-A record may have one `CounterColumns` field, and an `ExtraColumns` field after it holds the columns past its member columns.
+With an `ExtraColumns` field, the columns that are neither fields nor member columns are kept as extra columns.
 
 ### Custom Field Formats
 
