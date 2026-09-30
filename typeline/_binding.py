@@ -45,9 +45,9 @@ class FixedRecordType:
 
     Example:
         ```python
-        class BedReader(TsvReader[Bed], FixedRecordType): ...
+        class GeneReader(TsvReader[Gene], FixedRecordType): ...
 
-        reader = BedReader.from_path("regions.bed")
+        reader = GeneReader.from_path("genes.tsv")
         ```
     """
 

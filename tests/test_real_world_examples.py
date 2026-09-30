@@ -290,7 +290,7 @@ def test_gff3_attributes_are_read_into_a_dict(tmp_path: Path) -> None:
 
 @dataclass(frozen=True)
 class Rgb:
-    """A BED item color."""
+    """A display color for a genomic feature."""
 
     r: int
     g: int
@@ -309,8 +309,8 @@ class Rgb:
 
 
 @dataclass
-class BedFeature:
-    """A BED-like feature with a color, where `0` means no color, and block sizes."""
+class ColoredFeature:
+    """A genomic feature with a color, where `0` means no color, and block sizes."""
 
     chrom: str
     start: int
@@ -319,20 +319,20 @@ class BedFeature:
     block_sizes: list[int]
 
 
-def test_bed_features_read_a_missing_color_and_block_sizes(tmp_path: Path) -> None:
+def test_features_read_a_missing_color_and_block_sizes(tmp_path: Path) -> None:
     """Read a field's own missing marker with nullable and a trailing comma with delimited."""
     codecs: Codecs = {
         Rgb: nullable(FieldCodec(from_text=Rgb.from_string, into_text=str), missing="0"),
         list[int]: delimited(int),
     }
-    _ = (tmp_path / "features.bed").write_text("chr1\t10\t20\t255,0,0\t4,6,\nchr1\t30\t40\t0\t10\n")
+    _ = (tmp_path / "features.tsv").write_text("chr1\t10\t20\t255,0,0\t4,6,\nchr1\t30\t40\t0\t10\n")
 
-    with TsvReader.from_path[BedFeature](
-        tmp_path / "features.bed", header=False, codecs=codecs
+    with TsvReader.from_path[ColoredFeature](
+        tmp_path / "features.tsv", header=False, codecs=codecs
     ) as reader:
         assert list(reader) == [
-            BedFeature("chr1", 10, 20, Rgb(255, 0, 0), [4, 6]),
-            BedFeature("chr1", 30, 40, None, [10]),
+            ColoredFeature("chr1", 10, 20, Rgb(255, 0, 0), [4, 6]),
+            ColoredFeature("chr1", 30, 40, None, [10]),
         ]
 
 
