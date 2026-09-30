@@ -51,10 +51,10 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     """The options of a delimited data reader."""
 
     header: bool
-    """Whether we expect the first line to be a header or not."""
+    """Whether the first record is a header, whose columns are matched to fields by name."""
 
     comment_prefixes: Collection[str]
-    """Skip lines that have any of these string prefixes."""
+    """Skip lines that start with any of these prefixes, between records."""
 
     none_field: str
     """The text read as None in fields that allow None; a `str` field keeps it as text."""
@@ -69,7 +69,7 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     """Receive each comment line as it is skipped; comments are dropped if None."""
 
     quoting: bool
-    """Whether `"` quotes fields, as in CSV, or is ordinary text, as in formats like BED."""
+    """Whether `"` quotes fields, as in CSV, or is ordinary text, for formats without quoting."""
 
 
 class DelimitedDataReader(
@@ -97,9 +97,9 @@ class DelimitedDataReader(
 
         Args:
             handle: a file-like object to read delimited data from.
-            header: whether we expect the first line to be a header or not.
-            comment_prefixes: skip lines that have any of these string prefixes.
-            none_field: the string that is used in place of None for a field.
+            header: whether the first record is a header, matched to fields by name.
+            comment_prefixes: skip lines that start with any of these prefixes, between records.
+            none_field: the text read as None in fields that allow None; a `str` field keeps it.
             codecs: how to read a field from its text, by the field's type.
             dec_hook: decode custom types anywhere in a record, like msgspec's `dec_hook`.
             on_comment: receive each comment line as it is skipped; comments are dropped if None.
@@ -347,6 +347,9 @@ class DelimitedDataReader(
     @classmethod
     def from_path(cls, path: Path | str, /, **options: Unpack[ReaderOptions]) -> Self:
         """Construct a delimited data reader from a file path.
+
+        The file is read as UTF-8, decompressed when it is gzip, bzip2, or xz, and closed once read
+        to the end or when a record fails.
 
         Args:
             path: the path to the file to read delimited data from.

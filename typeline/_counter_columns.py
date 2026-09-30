@@ -29,7 +29,7 @@ MemberType = TypeVar("MemberType", bound=Enum)
 """The type variable for the enum whose members a `CounterColumns` field counts."""
 
 CounterColumns: TypeAlias = Annotated[Counter[MemberType], COUNTER_COLUMNS_MARKER]
-"""The type of a record's field that counts each member of an enum in a column named after it.
+"""The type of a record's field that counts each member of an enum, in one column per member.
 
 The enum's values must be text, as with a `StrEnum`, and name the columns.
 

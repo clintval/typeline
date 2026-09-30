@@ -10,7 +10,7 @@
 
 Write dataclasses to delimited text formats and read them back again.
 
-Features type-safe parsing, optional field support, and an intuitive API for working with structured data.
+Headers are matched to fields by name, values are typed by msgspec, and custom formats, comments, extra columns, and compressed files are supported.
 
 ## Installation
 
@@ -22,7 +22,7 @@ pip install typeline
 
 ## Quickstart
 
-### Building a Test Dataclass
+### Defining a Record
 
 ```pycon
 >>> from dataclasses import dataclass
@@ -38,9 +38,10 @@ pip install typeline
 ### Writing
 
 ```pycon
+>>> from pathlib import Path
 >>> from tempfile import NamedTemporaryFile
 >>> from typeline import TsvWriter
->>> 
+>>>
 >>> temp_file = NamedTemporaryFile(mode="w+t", suffix=".tsv")
 >>>
 >>> with TsvWriter.from_path[MyData](temp_file.name) as writer:
@@ -54,7 +55,7 @@ pip install typeline
 
 ```pycon
 >>> from typeline import TsvReader
->>> 
+>>>
 >>> with TsvReader.from_path[MyData](temp_file.name) as reader:
 ...     for record in reader:
 ...         print(record)
@@ -63,6 +64,8 @@ MyData(field1=20, field2='test2', field3=None)
 
 ```
 
+A reader expects a header by default, and matches its columns to fields by name, in any order.
+Pass `header=False` to read columns in field order.
 A reader from `from_path` closes its file once it is read to the end, so reading everything into a list needs no `with` block.
 
 ```pycon
@@ -74,22 +77,21 @@ A reader from `from_path` closes its file once it is read to the end, so reading
 
 To use an open text stream instead of a path, subscript the reader or writer class itself.
 
+Leaving the `with` block closes the stream.
+
 ```pycon
->>> import gzip
+>>> from io import StringIO
 >>>
->>> with TsvWriter[MyData](gzip.open(f"{temp_file.name}.gz", "wt")) as writer:
-...     writer.write(MyData(10, "test1", 0.2))
->>>
->>> with TsvReader[MyData](gzip.open(f"{temp_file.name}.gz", "rt"), header=False) as reader:
+>>> with TsvReader[MyData](StringIO("10\ttest1\t0.2\n"), header=False) as reader:
 ...     print(list(reader))
 [MyData(field1=10, field2='test1', field3=0.2)]
 
 ```
 
-### Compressed Files
+### Files
 
-`from_path` reads gzip, bzip2, and xz files, which it recognizes by their contents.
-It writes them when the path ends in `.gz`, `.bz2`, or `.xz`.
+`from_path` reads and writes UTF-8, skips a byte order mark, and ends lines with `os.linesep`.
+It reads gzip, bzip2, and xz files, which it recognizes by their contents, and writes them when the path ends in `.gz`, `.bz2`, or `.xz`.
 
 ```pycon
 >>> with TsvWriter.from_path[MyData](f"{temp_file.name}.gz") as writer:
@@ -112,9 +114,10 @@ A codec's `missing` text, as `typeline.codecs.nullable` sets, takes the place of
 
 A reader skips lines that start with any of its `comment_prefixes`, and hands each one to `on_comment` as a `Comment` with its line number.
 A writer writes comments with `write_comment`, so comments can be passed straight from a reader to a writer and keep their places.
+Readers have no comment prefixes by default, and writers use `#`.
 
 ```pycon
->>> _ = open(temp_file.name, "w").write("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
+>>> _ = Path(temp_file.name).write_text("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
 >>>
 >>> with (
 ...     TsvWriter.from_path[MyData](f"{temp_file.name}.copy") as writer,
@@ -124,7 +127,7 @@ A writer writes comments with `write_comment`, so comments can be passed straigh
 ...     for record in reader:
 ...         writer.write(record)
 >>>
->>> print(open(f"{temp_file.name}.copy").read(), end="")
+>>> print(Path(f"{temp_file.name}.copy").read_text(), end="")
 # made by a tool
 field1	field2	field3
 10	test1	0.2
@@ -133,7 +136,7 @@ field1	field2	field3
 
 ### Extra Columns
 
-A record can end with an `ExtraColumns` field, which holds any columns past its other fields as text.
+A record can end with an `ExtraColumns` field, which holds as text the columns no other field takes, in file order.
 Readers fill it, writers write it back, and a header only needs to name the other fields.
 
 ```pycon
@@ -145,30 +148,11 @@ Readers fill it, writers write it back, and a header only needs to name the othe
 ...     start: int
 ...     extra: ExtraColumns = ()
 >>>
->>> _ = open(temp_file.name, "w").write("exon1\t10\n\nexon2\t20\t0.9\tHIGH\n")
+>>> _ = Path(temp_file.name).write_text("exon1\t10\n\nexon2\t20\t0.9\tHIGH\n")
 >>>
 >>> with TsvReader.from_path[Region](temp_file.name, header=False) as reader:
 ...     print(list(reader))
 [Region(name='exon1', start=10, extra=()), Region(name='exon2', start=20, extra=('0.9', 'HIGH'))]
-
-```
-
-### Turning Off Quoting
-
-Readers and writers quote fields with `"` as CSV does, so text can hold the delimiter and line breaks.
-For formats without quoting, `quoting=False` reads and writes `"` as ordinary text.
-Without quoting, a writer refuses text that holds the delimiter or a line break with a `ValueError`.
-
-```pycon
->>> with TsvWriter.from_path[Region](temp_file.name, quoting=False) as writer:
-...     writer.write(Region('"exon1', 10, ('say "hi"',)))
->>>
->>> print(open(temp_file.name).read(), end="")
-"exon1	10	say "hi"
->>>
->>> with TsvReader.from_path[Region](temp_file.name, header=False, quoting=False) as reader:
-...     print(list(reader))
-[Region(name='"exon1', start=10, extra=('say "hi"',))]
 
 ```
 
@@ -200,11 +184,11 @@ Every member needs a column, and every count must be a non-negative integer.
 ...     writer.write_header()
 ...     writer.write(Pileup(100, Counter({Base.A: 12, Base.G: 3})))
 >>>
->>> print(open(temp_file.name).read(), end="")
+>>> print(Path(temp_file.name).read_text(), end="")
 position	A	C	G	T
 100	12	0	3	0
 >>>
->>> _ = open(temp_file.name, "w").write("position\tT\tG\tC\tA\n101\t2\t0\t0\t9\n")
+>>> _ = Path(temp_file.name).write_text("position\tT\tG\tC\tA\n101\t2\t0\t0\t9\n")
 >>>
 >>> with TsvReader.from_path[Pileup](temp_file.name) as reader:
 ...     print(list(reader))
@@ -214,15 +198,34 @@ position	A	C	G	T
 
 With an `ExtraColumns` field, the columns that are neither fields nor member columns are kept as extra columns.
 
+### Turning Off Quoting
+
+Readers and writers quote fields with `"` as CSV does, so text can hold the delimiter and line breaks.
+For formats without quoting, `quoting=False` reads and writes `"` as ordinary text.
+Without quoting, a writer refuses text that holds the delimiter or a line break with a `ValueError`.
+
+```pycon
+>>> with TsvWriter.from_path[Region](temp_file.name, quoting=False) as writer:
+...     writer.write(Region('"exon1', 10, ('say "hi"',)))
+>>>
+>>> print(Path(temp_file.name).read_text(), end="")
+"exon1	10	say "hi"
+>>>
+>>> with TsvReader.from_path[Region](temp_file.name, header=False, quoting=False) as reader:
+...     print(list(reader))
+[Region(name='"exon1', start=10, extra=('say "hi"',))]
+
+```
+
 ### Custom Field Formats
 
-Lists, dicts, sets, enums, and nested dataclasses are written as JSON by default.
+Lists, tuples, sets, dicts, and nested dataclasses are written as JSON by default, and dates, enums, and the like as their usual text.
 For any other text format, a `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
 Helpers in `typeline.codecs` cover common formats.
 
 ```pycon
 >>> from datetime import date
->>> from typeline import Codecs, FieldCodec
+>>> from typeline import Codecs
 >>> from typeline.codecs import boolean, delimited
 >>>
 >>> @dataclass
@@ -233,7 +236,6 @@ Helpers in `typeline.codecs` cover common formats.
 ...     blocks: list[int]
 >>>
 >>> codecs: Codecs = {
-...     date: FieldCodec(from_text=date.fromisoformat, into_text=date.isoformat),
 ...     bool: boolean(true="Y", false="N"),
 ...     list[int]: delimited(int, sep=";"),
 ... }
@@ -241,7 +243,7 @@ Helpers in `typeline.codecs` cover common formats.
 >>> with TsvWriter.from_path[Visit](temp_file.name, codecs=codecs) as writer:
 ...     writer.write(Visit("P-001", date(2026, 9, 29), True, [3, 1, 4]))
 >>>
->>> print(open(temp_file.name).read(), end="")
+>>> print(Path(temp_file.name).read_text(), end="")
 P-001	2026-09-29	Y	3;1;4
 >>>
 >>> with TsvReader.from_path[Visit](temp_file.name, header=False, codecs=codecs) as reader:
@@ -280,7 +282,7 @@ Each hook raises `NotImplementedError` for types it does not handle.
 >>> with TsvWriter.from_path[Target](temp_file.name, enc_hook=enc_hook) as writer:
 ...     writer.write(Target("BRCA1", [Interval(1, 9), Interval(20, 25)]))
 >>>
->>> print(open(temp_file.name).read(), end="")
+>>> print(Path(temp_file.name).read_text(), end="")
 BRCA1	[[1,9],[20,25]]
 >>>
 >>> with TsvReader.from_path[Target](temp_file.name, header=False, dec_hook=dec_hook) as reader:
@@ -301,11 +303,13 @@ Subclass a reader to give a format its own defaults.
 >>>
 >>> class VcfLikeReader(TsvReader[RecordType]):
 ...     def __init__(self, handle: TextIO, /, **options: Unpack[ReaderOptions]) -> None:
-...         _ = options.setdefault("header", False)
-...         _ = options.setdefault("comment_prefixes", {"#"})
-...         _ = options.setdefault("none_field", ".")
-...         _ = options.setdefault("codecs", {dict[str, str]: key_value()})
-...         super().__init__(handle, **options)
+...         defaults: ReaderOptions = {
+...             "header": False,
+...             "comment_prefixes": {"#"},
+...             "none_field": ".",
+...             "codecs": {dict[str, str]: key_value()},
+...         }
+...         super().__init__(handle, **(defaults | options))
 >>>
 >>> @dataclass
 ... class Site:
@@ -314,7 +318,7 @@ Subclass a reader to give a format its own defaults.
 ...     ident: str | None
 ...     info: dict[str, str]
 >>>
->>> _ = open(temp_file.name, "w").write("#CHROM\tPOS\tID\tINFO\nchr1\t100\t.\tDP=10;AF=0.5\n")
+>>> _ = Path(temp_file.name).write_text("#CHROM\tPOS\tID\tINFO\nchr1\t100\t.\tDP=10;AF=0.5\n")
 >>>
 >>> with VcfLikeReader.from_path[Site](temp_file.name) as reader:
 ...     print(list(reader))

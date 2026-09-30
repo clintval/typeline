@@ -56,7 +56,7 @@ class WriterOptions(TypedDict, total=False, closed=True):
     """The prefixes a comment line may start with; the first is added to lines without one."""
 
     quoting: bool
-    """Whether fields are quoted when needed, as in CSV, or never, as in formats like BED."""
+    """Whether fields are quoted when needed, as in CSV, or never, for formats without quoting."""
 
 
 LINE_BREAK: re.Pattern[str] = re.compile(r"\r\n|\r|\n")
@@ -84,8 +84,9 @@ class DelimitedDataWriter(
         """Instantiate a new delimited record writer.
 
         Args:
-            handle: a file-like object to write delimited data to.
-            none_field: the string that is used in place of None for a field.
+            handle: a text stream to write delimited data to, opened with `newline=""`.
+            none_field: the text written for None; with the default `""`, an empty `str | None`
+                reads as None.
             codecs: how to write a field into its text, by the field's type.
             enc_hook: encode custom types anywhere in a record, like msgspec's `enc_hook`.
             comment_prefixes: the prefixes a comment line may start with; the first is added to
@@ -285,6 +286,9 @@ class DelimitedDataWriter(
     @classmethod
     def from_path(cls, path: Path | str, /, **options: Unpack[WriterOptions]) -> Self:
         """Construct a delimited data writer from a file path.
+
+        The file is written as UTF-8, and compressed when its path ends in `.gz`, `.bz2`, or `.xz`.
+        The writer is checked before the file is opened, so a refused writer leaves a file alone.
 
         Args:
             path: the path to the file to write delimited data to.
