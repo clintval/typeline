@@ -5,7 +5,7 @@ description = "Write dataclasses to delimited text formats and read them back ag
 authors = [{ name = "Clint Valentine", email = "valentine.clint@gmail.com" }]
 license = "MIT"
 readme = "README.md"
-keywords = ["dataclass", "IO", "delimited-data", "CSV", "TSV", "msgspec"]
+keywords = ["dataclass", "typed", "delimited-data", "CSV", "TSV", "msgspec"]
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
@@ -14,7 +14,6 @@ dependencies = [
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -26,7 +25,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: File Formats",
-    "Topic :: Software Development :: Documentation",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
@@ -73,7 +71,7 @@ check-lock = "uv lock --check"
 check-pyproject = "validate-pyproject pyproject.toml"
 check-format = "ruff format --check --diff"
 check-lint = "ruff check"
-check-tests = "pytest --doctest-glob='*.md'"
+check-tests = "pytest"
 
 _check-mypy = "mypy"
 _check-pyright = "basedpyright"
@@ -97,15 +95,13 @@ fix-and-check-all.sequence = [
 ]
 
 [tool.pytest.ini_options]
-minversion = "7.4"
 addopts    = [
     "--color=yes",
-    "--cov-fail-under=80",
+    "--cov-fail-under=95",
     "--cov-report=term-missing",
-    "--cov",
     "--cov=typeline",
+    "--doctest-glob=*.md",
     "--doctest-modules",
-    "--doctest-plus",
     "--import-mode=importlib",
 ]
 doctest_plus = "enabled"
@@ -141,7 +137,7 @@ module = ".conftest"
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["typeline/", "tests/test_counter_pivot.py", "tests/test_reader_api.py", "tests/test_writer_api.py", "tests/test_real_world_examples.py"]
+include = ["typeline/", "tests/test_comments.py", "tests/test_compression.py", "tests/test_counter_pivot.py", "tests/test_extra_columns.py", "tests/test_reader_api.py", "tests/test_writer_api.py", "tests/test_real_world_examples.py"]
 enableTypeIgnoreComments = false
 reportUnnecessaryTypeIgnoreComment = "error"
 reportImportCycles = false
@@ -149,6 +145,9 @@ failOnWarnings = true
 reportAny = false
 reportExplicitAny = false
 pythonVersion = "3.11"
+
+[tool.ty.src]
+include = ["typeline", "tests"]
 
 [tool.ty.analysis]
 respect-type-ignore-comments = false
@@ -169,11 +168,8 @@ select    = [
     "C901",   # McCabe complexity
     "B",      # bugbear
     "D",      # pydocstyle (docstrings. We have the "google" convention enabled)
-    "D204",   # Blank line between class docstring and first (__init__) method
-    "D213",   # Summary line should be located on the line after opening quotes
     "E",      # pycodestyle errors
     "LOG",    # flake8-logging
-    "LOG015", # (preview rule) Prohibit calls to the root logger
     "F",      # pyflakes
     "I",      # isort
     "N",      # PEP8 naming
@@ -188,7 +184,6 @@ ignore    = [
     "D104",  # missing docstring in public package
 ]
 unfixable = ["B"]
-preview = true
 
 [tool.ruff.lint.mccabe]
 max-complexity = 13
@@ -214,7 +209,7 @@ body = """
 [tool.git-cliff.git]
 conventional_commits = true
 commit_parsers = [
-    { message = "^.+!:*", group = "Breaking"},
+    { message = "^[a-z]+(\\(.+\\))?!:", group = "Breaking"},
     { message = "^security*", group = "Security"},
     { message = "^feat*", group = "Features"},
     { message = "^fix*", group = "Bug Fixes"},
@@ -223,7 +218,11 @@ commit_parsers = [
     { message = "^refactor*", group = "Refactor"},
     { message = "^style*", group = "Styling"},
     { message = "^test*", group = "Testing"},
+    { message = "^build*", group = "Build"},
+    { message = "^ci*", group = "Continuous Integration"},
+    { message = "^revert*", group = "Reverts"},
     { message = "^chore\\(release\\):*", skip = true},
+    { message = "^chore\\(deps\\)*", skip = true},
     { message = "^chore*", group = "Miscellaneous Tasks"},
     { body = ".*security", group = "Security"}
 ]
