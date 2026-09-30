@@ -80,3 +80,17 @@ def test_from_path_writes_other_files_uncompressed(tmp_path: Path) -> None:
             writer.write(record)
 
     assert path.read_text() == TEXT
+
+
+def test_a_plain_file_that_starts_like_bzip2_is_read_as_text(tmp_path: Path) -> None:
+    """Test that only the full bzip2 signature, not its first letters, marks a file as bzip2."""
+
+    @dataclass(frozen=True)
+    class Code:
+        BZh1: str
+
+    path = tmp_path / "codes.tsv"
+    _ = path.write_text("BZh1\nabc\n")
+
+    with TsvReader.from_path[Code](path) as reader:
+        assert list(reader) == [Code("abc")]
