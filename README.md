@@ -326,6 +326,7 @@ Subclass a reader to give a format its own defaults.
 ```
 
 Type checkers see `VcfLikeReader.from_path[Site](...)` as a `TsvReader[Site]`, its closest built-in reader.
+A subclass can add its own constructors that take a record type the same way by decorating a classmethod with `SubscriptableClassmethod`.
 
 A reader fixed to one record type can add `FixedRecordType` to its bases, and is then built without a subscript.
 

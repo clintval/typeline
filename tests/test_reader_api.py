@@ -5,6 +5,7 @@ configured to fail on unused ignore comments, so these comments assert the error
 """
 
 from dataclasses import dataclass
+from io import StringIO
 from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from typing import TextIO
 from typing import cast
 
 import pytest
+from typing_extensions import Self
 from typing_extensions import Unpack
 from typing_extensions import assert_type
 from typing_extensions import override
@@ -21,6 +23,7 @@ from typeline import DelimitedDataReader
 from typeline import FixedRecordType
 from typeline import ReaderOptions
 from typeline import RecordType
+from typeline import SubscriptableClassmethod
 from typeline import TsvReader
 
 
@@ -265,3 +268,21 @@ def test_from_path_subscripted_on_a_fixed_reader_advises_no_subscript(csv_path: 
         TypeError, match=r"Call MyDataReader\.from_path\(\.\.\.\) without a subscript"
     ):
         _ = from_path[MyData](csv_path)
+
+
+def test_subclasses_can_define_their_own_subscriptable_classmethods(csv_path: Path) -> None:
+    """Test that a subclass can add its own subscriptable constructor, like from_path."""
+
+    class MyReader(CsvReader[RecordType]):
+        """A reader with its own subscriptable constructor."""
+
+        @SubscriptableClassmethod
+        @classmethod
+        def from_text(cls, text: str) -> Self:
+            """Read records from text."""
+            return cls(StringIO(text))
+
+    with MyReader.from_text[MyData](csv_path.read_text()) as reader:
+        records = list(reader)
+
+    assert records == list(CsvReader.from_path[MyData](csv_path))
