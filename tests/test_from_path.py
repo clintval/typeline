@@ -205,3 +205,51 @@ def test_reader_from_a_path_closes_its_file_when_a_record_fails(
 
     assert opened
     assert all(handle.closed for handle in opened)
+
+
+@pytest.mark.parametrize("compress", [bytes, gzip.compress, bz2.compress, lzma.compress])
+def test_from_path_reads_an_empty_file(tmp_path: Path, compress: Callable[[bytes], bytes]) -> None:
+    """Test that an empty file, compressed or not, has no records."""
+    path = tmp_path / "empty.tsv"
+    _ = path.write_bytes(compress(b""))
+
+    with TsvReader.from_path[Sample](path, header=False) as reader:
+        assert list(reader) == []
+
+
+def test_from_path_reads_a_file_shorter_than_a_compression_signature(tmp_path: Path) -> None:
+    """Test that a plain file shorter than the longest compression signature is read whole."""
+
+    @dataclass(frozen=True)
+    class Code:
+        BZh: str
+
+    path = tmp_path / "codes.tsv"
+    _ = path.write_bytes(b"BZh\nabc\n")
+
+    with TsvReader.from_path[Code](path) as reader:
+        assert list(reader) == [Code("abc")]
+
+
+@pytest.mark.parametrize("contents", [b"", b"BZh\n", gzip.compress(TEXT.encode())])
+def test_reader_from_a_path_closes_the_file_it_decompresses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contents: bytes
+) -> None:
+    """Test that closing a reader from from_path closes its file, however short or compressed."""
+    path = tmp_path / "samples.tsv"
+    _ = path.write_bytes(contents)
+    opened: list[Any] = []
+    original_open: Callable[..., Any] = Path.open
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = original_open(self, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", recording_open)
+
+    with TsvReader.from_path[Sample](path, header=False):
+        assert len(opened) == 1
+        assert not opened[0].closed
+
+    assert opened[0].closed
