@@ -269,7 +269,7 @@ A reader fixed to one record type can add `FixedRecordType` to its bases, and is
 
 ```
 
-More examples, from sample sheets to GFF3 and BED-like data, are in [`tests/test_real_world_examples.py`](./tests/test_real_world_examples.py).
+More examples, from sample sheets to GFF3 and colored genomic features, are in [`tests/test_real_world_examples.py`](./tests/test_real_world_examples.py).
 
 ## Development and Testing
 
