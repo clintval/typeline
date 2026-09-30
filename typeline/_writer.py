@@ -1,11 +1,9 @@
 import csv
-from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import Field
 from dataclasses import fields as fields_of
-from inspect import Parameter
-from inspect import signature
+from io import StringIO
 from math import isfinite
 from os import linesep
 from pathlib import Path
@@ -274,26 +272,13 @@ class DelimitedDataWriter(
             path: the path to the file to write delimited data to.
             options: the options of the writer, left at the writer's defaults when not given.
         """
-        _refuse_unknown_options(cls, options)
+        _ = cls(StringIO(), **options)
         handle = open_for_writing(path)
         try:
             return cls(handle, **options)
         except BaseException:
             handle.close()
             raise
-
-
-def _refuse_unknown_options(cls: type[Any], options: Mapping[str, Any]) -> None:
-    """Refuse options the writer does not take, before its file is opened and so emptied."""
-    parameters = signature(cls).parameters
-    arguments = signature(cls).bind(None, **options).arguments
-    for name, parameter in parameters.items():
-        if parameter.kind is Parameter.VAR_KEYWORD:
-            unknown = sorted(set(arguments.get(name, {})) - set(WriterOptions.__annotations__))
-            if unknown:
-                raise TypeError(
-                    f"{cls.__name__}() got an unexpected keyword argument '{unknown[0]}'"
-                )
 
 
 class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):

@@ -4,6 +4,7 @@ Every expected static error carries an ignore comment for mypy, pyright, and ty.
 configured to fail on unused ignore comments, so these comments assert the error is reported.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing_extensions import override
 
 from typeline import CsvWriter
 from typeline import DelimitedDataWriter
+from typeline import ExtraColumns
 from typeline import FixedRecordType
 from typeline import RecordType
 from typeline import TsvWriter
@@ -196,3 +198,65 @@ def test_from_path_with_an_unknown_keyword_leaves_an_existing_file_alone(tmp_pat
     with pytest.raises(TypeError, match=r"unexpected keyword argument 'nonefield'"):
         CsvWriter.from_path[MyData](tmp_path / "test.csv", nonefield=".")  # type: ignore[call-arg]  # pyright: ignore[reportCallIssue]  # ty: ignore[unknown-argument]
     assert (tmp_path / "test.csv").read_text() == "keep me\n"
+
+
+@dataclass
+class Misplaced:
+    """A record whose ExtraColumns field is not its last field, which writers refuse."""
+
+    extra: ExtraColumns
+    field1: int
+
+
+def open_with_a_bad_option_value(path: Path) -> object:
+    """Open a writer with no comment prefixes, which writers refuse."""
+    return CsvWriter.from_path[MyData](path, comment_prefixes=())
+
+
+def open_with_a_bad_record_type(path: Path) -> object:
+    """Open a writer for a record whose ExtraColumns field is not last, which writers refuse."""
+    return CsvWriter.from_path[Misplaced](path)
+
+
+def open_without_a_delimiter(path: Path) -> object:
+    """Open the base writer, which has no delimiter."""
+    return DelimitedDataWriter.from_path[MyData](path)
+
+
+@pytest.mark.parametrize(
+    "open_writer",
+    [open_with_a_bad_option_value, open_with_a_bad_record_type, open_without_a_delimiter],
+)
+def test_from_path_leaves_an_existing_file_alone_when_the_writer_is_refused(
+    tmp_path: Path, open_writer: Callable[[Path], object]
+) -> None:
+    """Test that from_path checks a writer fully before it opens, and so empties, a file."""
+    path = tmp_path / "test.csv"
+    _ = path.write_text("keep me\n")
+
+    with pytest.raises((TypeError, ValueError)):
+        _ = open_writer(path)
+
+    assert path.read_text() == "keep me\n"
+
+
+def test_from_path_with_an_unknown_keyword_through_a_subclass_leaves_a_file_alone(
+    tmp_path: Path,
+) -> None:
+    """Test that an unknown option passed through a subclass's options is refused before opening."""
+
+    class DotCsvWriter(CsvWriter[RecordType]):
+        """A comma-delimited writer that writes None as a period by default."""
+
+        @override
+        def __init__(self, handle: TextIO, /, **options: Unpack[WriterOptions]) -> None:
+            _ = options.setdefault("none_field", ".")
+            super().__init__(handle, **options)
+
+    path = tmp_path / "test.csv"
+    _ = path.write_text("keep me\n")
+    options: Any = {"nonefield": "."}
+    with pytest.raises(TypeError, match=r"unexpected keyword argument 'nonefield'"):
+        _ = DotCsvWriter.from_path[MyData](path, **options)
+
+    assert path.read_text() == "keep me\n"
