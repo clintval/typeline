@@ -216,9 +216,9 @@ With an `ExtraColumns` field, the columns that are neither fields nor member col
 
 ### Column Names
 
-A column is named after its field, unless `columns` provides an alias.
-Writers can write these aliased names in the header, and readers will match a pre-existing header to them, in any column order.
-A column alias can be any text, like `%GC` or `mean depth`, and can be made at runtime too.
+A column is named after its field, unless `columns` gives it another name.
+Writers can write these names in the header, and readers will match a pre-existing header to them, in any column order.
+A column name can be any text, like `%GC` or `mean depth`, and can be made at runtime too.
 
 ```pycon
 >>> @dataclass
@@ -244,12 +244,11 @@ s1	41.2	0.03
 
 ```
 
-A field has one column, so once it is aliased, that alias is now the new name of the column and the old one is retired.
+A field has one column, so once it is given another name, that name replaces the field's name and the old one is retired.
 Names are checked when a reader or writer is built.
-If you provide a column alias for something that is not a field, for an `ExtraColumns` or `CounterColumns` field, or one that two columns share, then an exception is raised.
-Without a header, columns are read in field order and column aliases have no effect.
+If you name a column for something that is not a field, for an `ExtraColumns` or `CounterColumns` field, or give two columns the same name, then an exception is raised.
+Without a header, columns are read in field order and `columns` has no effect.
 A name starting with a comment prefix, like `#chrom`, is quoted when it starts a header, unless the reader and writer are given `comment_prefixes` that it does not start with, like `["##"]`.
-
 
 ### Turning Off Quoting
 
