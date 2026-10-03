@@ -216,9 +216,9 @@ With an `ExtraColumns` field, the columns that are neither fields nor member col
 
 ### Column Names
 
-A column is named after its field, unless `columns` names it otherwise, by the field's name.
-Writers write these names in the header, and readers match a header to them, in any order.
-A name can be any text, like `%GC` or `mean depth`, and can be made at runtime, like a name holding a command-line threshold.
+A column is named after its field, unless `columns` provides an alias.
+Writers can write these aliased names in the header, and readers will match a pre-existing header to them, in any column order.
+A column alias can be any text, like `%GC` or `mean depth`, and can be made at runtime too.
 
 ```pycon
 >>> @dataclass
