@@ -250,6 +250,7 @@ If you provide a column alias for something that is not a field, for an `ExtraCo
 Without a header, columns are read in field order and column aliases have no effect.
 A name starting with a comment prefix, like `#chrom`, is quoted when it starts a header, unless the reader and writer are given `comment_prefixes` that it does not start with, like `["##"]`.
 
+
 ### Turning Off Quoting
 
 Readers and writers quote fields with `"` as CSV does, so text can hold the delimiter and line breaks.
