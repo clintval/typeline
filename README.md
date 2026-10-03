@@ -244,11 +244,11 @@ s1	41.2	0.03
 
 ```
 
-A field has one column, so once it is named, a column holding the field's own name is like any column no field takes.
-Names are checked when a reader or writer is built: a name for something that is not a field, for an `ExtraColumns` or `CounterColumns` field, or one that two columns would share, is refused with a `ValueError`.
-Without a header, columns are read in field order and names have no effect.
-A name starting with a comment prefix, like `#chrom`, is quoted when it starts a header, unless the reader and writer are given `comment_prefixes` it does not start with, like `["##"]`.
-Names a format always uses can be given once, as the defaults of its own reader and writer, as in [Your Own Format](#your-own-format).
+A field has one column, so once it is aliased, that alias is now the new name of the column and the old one is retired.
+Names are checked when a reader or writer is built.
+If you provide a column alias for something that is not a field, for an `ExtraColumns` or `CounterColumns` field, or one that two columns share, then an exception is raised.
+Without a header, columns are read in field order and column aliases have no effect.
+A name starting with a comment prefix, like `#chrom`, is quoted when it starts a header, unless the reader and writer are given `comment_prefixes` that it does not start with, like `["##"]`.
 
 ### Turning Off Quoting
 
