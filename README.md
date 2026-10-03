@@ -216,7 +216,7 @@ With an `ExtraColumns` field, the columns that are neither fields nor member col
 
 ### Column Names
 
-A column is named after its field, unless `columns` gives it another name.
+A column is named after its field, unless `rename` gives it another name.
 Writers can write these names in the header, and readers will match a pre-existing header to them, in any column order.
 A column name can be any text, like `%GC` or `mean depth`, and can be made at runtime too.
 
@@ -228,9 +228,9 @@ A column name can be any text, like `%GC` or `mean depth`, and can be made at ru
 ...     frac_below_min: float
 >>>
 >>> min_depth = 20
->>> columns = {"gc": "%GC", "frac_below_min": f"frac_below_{min_depth}x"}
+>>> rename = {"gc": "%GC", "frac_below_min": f"frac_below_{min_depth}x"}
 >>>
->>> with TsvWriter.from_path[Coverage](temp_file.name, columns=columns) as writer:
+>>> with TsvWriter.from_path[Coverage](temp_file.name, rename=rename) as writer:
 ...     writer.write_header()
 ...     writer.write(Coverage("s1", 41.2, 0.03))
 >>>
@@ -238,7 +238,7 @@ A column name can be any text, like `%GC` or `mean depth`, and can be made at ru
 sample	%GC	frac_below_20x
 s1	41.2	0.03
 >>>
->>> with TsvReader.from_path[Coverage](temp_file.name, columns=columns) as reader:
+>>> with TsvReader.from_path[Coverage](temp_file.name, rename=rename) as reader:
 ...     print(list(reader))
 [Coverage(sample='s1', gc=41.2, frac_below_min=0.03)]
 
@@ -247,7 +247,7 @@ s1	41.2	0.03
 A field has one column, so once it is given another name, that name replaces the field's name and the old one is retired.
 Names are checked when a reader or writer is built.
 If you name a column for something that is not a field, for an `ExtraColumns` or `CounterColumns` field, or give two columns the same name, then an exception is raised.
-Without a header, columns are read in field order and `columns` has no effect.
+Without a header, columns are read in field order and `rename` has no effect.
 A name starting with a comment prefix, like `#chrom`, is quoted when it starts a header, unless the reader and writer are given `comment_prefixes` that it does not start with, like `["##"]`.
 
 ### Turning Off Quoting

@@ -4,8 +4,8 @@ from typing import Any
 
 from ._counter_columns import CounterFields
 
-NO_COLUMNS: Mapping[str, str] = MappingProxyType({})
-"""No column names: every field's column is named after the field."""
+NO_RENAME: Mapping[str, str] = MappingProxyType({})
+"""No renamed columns: every field's column is named after the field."""
 
 
 def name_columns(
@@ -13,30 +13,30 @@ def name_columns(
     field_type_map: dict[str, Any],
     extra_field: str | None,
     counters: CounterFields,
-    columns: Mapping[str, object],
+    rename: Mapping[str, object],
 ) -> dict[str, str]:
-    """Return the column of each field held in one column, named in `columns` or after the field.
+    """Return the column of each field held in one column, named in `rename` or after the field.
 
     Raises:
-        TypeError: if a column is not named by a string.
-        ValueError: if `columns` names the column of something that is not a field held in one
-            column, or if two columns of the record would share a name.
+        TypeError: if a column is not renamed to a string.
+        ValueError: if `rename` renames something that is not a field held in one column, or if
+            two columns of the record would share a name.
     """
     record = record_type.__name__
-    for name in columns:
+    for name in rename:
         if name not in field_type_map:
             raise ValueError(
-                f"Cannot name a column for '{name}', which is not a field of {record}!"
+                f"Cannot rename '{name}', which is not a field of {record}!"
                 + f" Fields of {record}: {list(field_type_map)}."
             )
         if name == extra_field:
             raise ValueError(
-                f"Cannot name a column for the ExtraColumns field '{name}' of {record},"
+                f"Cannot rename the ExtraColumns field '{name}' of {record},"
                 + " which holds the columns no other field takes!"
             )
         if name in counters:
             raise ValueError(
-                f"Cannot name a column for the CounterColumns field '{name}' of {record},"
+                f"Cannot rename the CounterColumns field '{name}' of {record},"
                 + " whose columns are named after the values of its members!"
             )
     column_of: dict[str, str] = {}
@@ -44,10 +44,10 @@ def name_columns(
     for name in field_type_map:
         if name == extra_field or name in counters:
             continue
-        column = columns.get(name, name)
+        column = rename.get(name, name)
         if not isinstance(column, str):
             raise TypeError(
-                f"The column of field '{name}' of {record} must be named by a string,"
+                f"The column of field '{name}' of {record} must be renamed to a string,"
                 + f" not {column!r}!"
             )
         if column in field_of:

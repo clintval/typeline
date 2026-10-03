@@ -23,7 +23,7 @@ from typing_extensions import override
 
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
-from ._columns import NO_COLUMNS
+from ._columns import NO_RENAME
 from ._columns import in_column
 from ._columns import name_columns
 from ._comment import Comment
@@ -45,8 +45,8 @@ DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 class WriterOptions(TypedDict, total=False, closed=True):
     """The options of a delimited data writer."""
 
-    columns: Mapping[str, str]
-    """The column of each field, by field name, where the column is not named after the field."""
+    rename: Mapping[str, str]
+    """A new column name for each field, by field name; a field not named here keeps its own."""
 
     none_field: str
     """The text written for None; with the default `""`, an empty `str | None` reads as None."""
@@ -80,7 +80,7 @@ class DelimitedDataWriter(
         handle: TextIO,
         /,
         *,
-        columns: Mapping[str, str] = NO_COLUMNS,
+        rename: Mapping[str, str] = NO_RENAME,
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
@@ -91,8 +91,8 @@ class DelimitedDataWriter(
 
         Args:
             handle: a text stream to write delimited data to, opened with `newline=""`.
-            columns: the column of each field, by field name, where it is not named after the
-                field; the header is written with these names.
+            rename: a new name for the column of each field, by field name; the header is
+                written with these names.
             none_field: the text written for None; with the default `""`, an empty `str | None`
                 reads as None.
             codecs: how to write a field into its text, by the field's type.
@@ -124,7 +124,7 @@ class DelimitedDataWriter(
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._column_of: dict[str, str] = name_columns(
-            record_type, self._field_type_map, self._extra_field, self._counters, columns
+            record_type, self._field_type_map, self._extra_field, self._counters, rename
         )
         layout: list[tuple[str, str]] = [
             (name, column)

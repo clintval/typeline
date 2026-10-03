@@ -26,7 +26,7 @@ from typing_extensions import override
 
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
-from ._columns import NO_COLUMNS
+from ._columns import NO_RENAME
 from ._columns import in_column
 from ._columns import name_columns
 from ._comment import Comment
@@ -61,8 +61,8 @@ class ReaderOptions(TypedDict, total=False, closed=True):
     header: bool
     """Whether the first record is a header, whose columns are matched to fields by name."""
 
-    columns: Mapping[str, str]
-    """The column of each field, by field name, where the column is not named after the field."""
+    rename: Mapping[str, str]
+    """A new column name for each field, by field name; a field not named here keeps its own."""
 
     comment_prefixes: Collection[str]
     """Skip lines that start with any of these prefixes, between records."""
@@ -97,7 +97,7 @@ class DelimitedDataReader(
         /,
         *,
         header: bool = True,
-        columns: Mapping[str, str] = NO_COLUMNS,
+        rename: Mapping[str, str] = NO_RENAME,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
@@ -110,8 +110,8 @@ class DelimitedDataReader(
         Args:
             handle: a file-like object to read delimited data from.
             header: whether the first record is a header, matched to fields by name.
-            columns: the column of each field, by field name, where it is not named after the
-                field; a header is matched to these names, which have no effect without one.
+            rename: a new name for the column of each field, by field name; a header is matched
+                to these names, which have no effect without one.
             comment_prefixes: skip lines that start with any of these prefixes, between records.
             none_field: the text read as None in fields that allow None; a `str` field keeps it.
             codecs: how to read a field from its text, by the field's type.
@@ -144,7 +144,7 @@ class DelimitedDataReader(
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._column_of: dict[str, str] = name_columns(
-            record_type, self._field_type_map, self._extra_field, self._counters, columns
+            record_type, self._field_type_map, self._extra_field, self._counters, rename
         )
         self._field_readers: list[tuple[str, Callable[[str, int | None], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
@@ -173,10 +173,10 @@ class DelimitedDataReader(
         self._extra_positions: list[int] = []
         found: list[str] | None = next(self._rows, None) if header else None
         self._record_end = self._rows.line_num
-        known: set[str] = set(self._columns)
+        columns: set[str] = set(self._columns)
         if found is not None:
             repeated: list[str] = sorted(
-                name for name, count in Counter(found).items() if count > 1 and name in known
+                name for name, count in Counter(found).items() if count > 1 and name in columns
             )
             if repeated:
                 raise ValueError(
@@ -185,7 +185,7 @@ class DelimitedDataReader(
                 )
             present: set[str] = set(found)
             missing: list[str] = [name for name in self._columns if name not in present]
-            unexpected: list[str] = [name for name in found if name not in known]
+            unexpected: list[str] = [name for name in found if name not in columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     f"Columns of header do not match fields of {record_type.__name__}"
@@ -201,7 +201,7 @@ class DelimitedDataReader(
             index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
             self._positions = [index_of[name] for name in self._header]
             self._extra_positions = [
-                index for index, name in enumerate(layout) if name not in known
+                index for index, name in enumerate(layout) if name not in columns
             ]
         self._read_record: Callable[[list[str], int | None], RecordType] = self._record_reader()
 
