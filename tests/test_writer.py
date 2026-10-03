@@ -273,7 +273,8 @@ def test_writer_header_refuses_unquotable_names_without_quoting() -> None:
     class Counts:
         counts: CounterColumns[Letter]
 
-    with pytest.raises(ValueError, match=r"Cannot write field 'A\tB' of Counts without quoting"):
+    message = r"Cannot write field 'counts' in column 'A\tB' of Counts without quoting"
+    with pytest.raises(ValueError, match=message):
         TsvWriter[Counts](StringIO(), quoting=False).write_header()
 
 

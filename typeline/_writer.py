@@ -1,5 +1,6 @@
 import csv
 import re
+from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from io import StringIO
@@ -22,6 +23,9 @@ from typing_extensions import override
 
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
+from ._columns import NO_RENAME
+from ._columns import in_column
+from ._columns import name_columns
 from ._comment import Comment
 from ._counter_columns import CounterFields
 from ._data_types import RecordType
@@ -40,6 +44,9 @@ DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 
 class WriterOptions(TypedDict, total=False, closed=True):
     """The options of a delimited data writer."""
+
+    rename: Mapping[str, str]
+    """A new column name for each field, by field name; a field not named here keeps its own."""
 
     none_field: str
     """The text written for None; with the default `""`, an empty `str | None` reads as None."""
@@ -73,6 +80,7 @@ class DelimitedDataWriter(
         handle: TextIO,
         /,
         *,
+        rename: Mapping[str, str] = NO_RENAME,
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
         enc_hook: Callable[[Any], Any] | None = None,
@@ -83,6 +91,8 @@ class DelimitedDataWriter(
 
         Args:
             handle: a text stream to write delimited data to, opened with `newline=""`.
+            rename: a new name for the column of each field, by field name; the header is
+                written with these names.
             none_field: the text written for None; with the default `""`, an empty `str | None`
                 reads as None.
             codecs: how to write a field into its text, by the field's type.
@@ -113,12 +123,17 @@ class DelimitedDataWriter(
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
-        self._header: tuple[str, ...] = tuple(
-            column
+        self._column_of: dict[str, str] = name_columns(
+            record_type, self._field_type_map, self._extra_field, self._counters, rename
+        )
+        layout: list[tuple[str, str]] = [
+            (name, column)
             for name in self._field_type_map
             if name != self._extra_field
-            for column in self._counters.columns_of(name)
-        )
+            for column in self._counters.columns_of(name, self._column_of)
+        ]
+        self._header: tuple[str, ...] = tuple(column for _, column in layout)
+        self._header_fields: tuple[str, ...] = tuple(name for name, _ in layout)
         self._field_codecs: list[tuple[str, FieldCodec[Any] | None, bool]] = [
             (name, find_codec(field_type, codecs), name in self._counters)
             for name, field_type in self._field_type_map.items()
@@ -168,10 +183,7 @@ class DelimitedDataWriter(
             try:
                 return codec.into_text(value)
             except Exception as exception:
-                field_type = type_name(self._field_type_map[field_name])
-                raise ValueError(
-                    f"Could not write field '{field_name}' of type {field_type}!"
-                ) from exception
+                raise self._unwritable(field_name) from exception
 
         kind = type(value)
         if kind is str and isinstance(value, str):
@@ -187,10 +199,13 @@ class DelimitedDataWriter(
             builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
             return builtin if isinstance(builtin, str) else self._encoder.encode(builtin).decode()
         except (TypeError, ValueError) as exception:
-            field_type = type_name(self._field_type_map[field_name])
-            raise ValueError(
-                f"Could not write field '{field_name}' of type {field_type}!"
-            ) from exception
+            raise self._unwritable(field_name) from exception
+
+    def _unwritable(self, field_name: str) -> ValueError:
+        """Explain which field could not be written into its text."""
+        field_type = type_name(self._field_type_map[field_name])
+        where = in_column(field_name, self._column_of[field_name])
+        return ValueError(f"Could not write field '{field_name}' of type {field_type}{where}!")
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.
@@ -255,9 +270,11 @@ class DelimitedDataWriter(
             if list(row) == [""]
             else (0, f"its text starts with a comment prefix: {row[0]!r}"),
         )
-        name = self._header[index] if index < len(self._header) else self._extra_field
+        named = index < len(self._header)
+        name = self._header_fields[index] if named else self._extra_field
+        where = in_column(self._header_fields[index], self._header[index]) if named else ""
         return ValueError(
-            f"Cannot write field '{name}' of {self._record_type.__name__} without quoting,"
+            f"Cannot write field '{name}'{where} of {self._record_type.__name__} without quoting,"
             + f" because {reason}!"
         )
 

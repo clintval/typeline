@@ -214,6 +214,42 @@ position	A	C	G	T
 
 With an `ExtraColumns` field, the columns that are neither fields nor member columns are kept as extra columns.
 
+### Column Names
+
+A column is named after its field, unless `rename` gives it another name.
+Writers can write these names in the header, and readers will match a pre-existing header to them, in any column order.
+A column name can be any text, like `%GC` or `mean depth`, and can be made at runtime too.
+
+```pycon
+>>> @dataclass
+... class Coverage:
+...     sample: str
+...     gc: float
+...     frac_below_min: float
+>>>
+>>> min_depth = 20
+>>> rename = {"gc": "%GC", "frac_below_min": f"frac_below_{min_depth}x"}
+>>>
+>>> with TsvWriter.from_path[Coverage](temp_file.name, rename=rename) as writer:
+...     writer.write_header()
+...     writer.write(Coverage("s1", 41.2, 0.03))
+>>>
+>>> print(Path(temp_file.name).read_text(), end="")
+sample	%GC	frac_below_20x
+s1	41.2	0.03
+>>>
+>>> with TsvReader.from_path[Coverage](temp_file.name, rename=rename) as reader:
+...     print(list(reader))
+[Coverage(sample='s1', gc=41.2, frac_below_min=0.03)]
+
+```
+
+A field has one column, so once it is given another name, that name replaces the field's name and the old one is retired.
+Names are checked when a reader or writer is built.
+If you name a column for something that is not a field, for an `ExtraColumns` or `CounterColumns` field, or give two columns the same name, then an exception is raised.
+Without a header, columns are read in field order and `rename` has no effect.
+A name starting with a comment prefix, like `#chrom`, is quoted when it starts a header, unless the reader and writer are given `comment_prefixes` that it does not start with, like `["##"]`.
+
 ### Turning Off Quoting
 
 Readers and writers quote fields with `"` as CSV does, so text can hold the delimiter and line breaks.

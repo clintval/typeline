@@ -3,6 +3,7 @@ from collections import Counter
 from collections.abc import Collection
 from collections.abc import Iterable
 from collections.abc import Iterator
+from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from io import StringIO
 from pathlib import Path
@@ -25,6 +26,9 @@ from typing_extensions import override
 
 from ._binding import DelimitedData
 from ._binding import SubscriptableClassmethod
+from ._columns import NO_RENAME
+from ._columns import in_column
+from ._columns import name_columns
 from ._comment import Comment
 from ._counter_columns import CounterFields
 from ._data_types import RecordType
@@ -56,6 +60,9 @@ class ReaderOptions(TypedDict, total=False, closed=True):
 
     header: bool
     """Whether the first record is a header, whose columns are matched to fields by name."""
+
+    rename: Mapping[str, str]
+    """A new column name for each field, by field name; a field not named here keeps its own."""
 
     comment_prefixes: Collection[str]
     """Skip lines that start with any of these prefixes, between records."""
@@ -90,6 +97,7 @@ class DelimitedDataReader(
         /,
         *,
         header: bool = True,
+        rename: Mapping[str, str] = NO_RENAME,
         comment_prefixes: Collection[str] = DEFAULT_COMMENT_PREFIXES,
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
@@ -102,6 +110,8 @@ class DelimitedDataReader(
         Args:
             handle: a file-like object to read delimited data from.
             header: whether the first record is a header, matched to fields by name.
+            rename: a new name for the column of each field, by field name; a header is matched
+                to these names, which have no effect without one.
             comment_prefixes: skip lines that start with any of these prefixes, between records.
             none_field: the text read as None in fields that allow None; a `str` field keeps it.
             codecs: how to read a field from its text, by the field's type.
@@ -133,17 +143,20 @@ class DelimitedDataReader(
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
+        self._column_of: dict[str, str] = name_columns(
+            record_type, self._field_type_map, self._extra_field, self._counters, rename
+        )
         self._field_readers: list[tuple[str, Callable[[str, int | None], Any] | None]] = [
             (name, self._field_reader(name, field_type, find_codec(field_type, codecs)))
             for name, field_type in self._field_type_map.items()
-            if name != self._extra_field and name not in self._counters
+            if name in self._column_of
         ]
-        self._header: list[str] = [name for name, _ in self._field_readers]
+        self._header: list[str] = [self._column_of[name] for name, _ in self._field_readers]
         self._columns: list[str] = [
             column
             for name in self._field_type_map
             if name != self._extra_field
-            for column in self._counters.columns_of(name)
+            for column in self._counters.columns_of(name, self._column_of)
         ]
 
         # Read rows as lists, filtering out blank and comment lines between records.
@@ -243,6 +256,7 @@ class DelimitedDataReader(
 
         if codec is not None:
             missing = none_field if codec.missing is None else codec.missing
+            where = in_column(name, self._column_of[name])
 
             def read_with_codec(text: str, line_number: int | None) -> Any:
                 if text == missing:
@@ -252,7 +266,7 @@ class DelimitedDataReader(
                 except Exception as exception:
                     raise ValueError(
                         f"Could not read field '{name}' of type {type_name(field_type)} from text"
-                        + f" '{text}'{_on_line(line_number)}!"
+                        + f" '{text}'{where}{_on_line(line_number)}!"
                     ) from exception
 
             return read_with_codec
