@@ -118,10 +118,15 @@ class CounterFields:
             )
         self._by_column[column] = (name, member)
 
-    def columns_of(self, name: str) -> list[str]:
-        """Return the columns a field is held in: one per member for a `CounterColumns` field."""
+    def columns_of(self, name: str, column_of: Mapping[str, str]) -> list[str]:
+        """Return the columns a field is held in: its own, or one per member of a Counter field."""
         enum = self._enums.get(name)
-        return [name] if enum is None else [member.value for member in enum]
+        return [column_of[name]] if enum is None else [member.value for member in enum]
+
+    def field_with_column(self, column: str) -> str | None:
+        """Return the `CounterColumns` field that has a member column of this name, if any."""
+        found = self._by_column.get(column)
+        return None if found is None else found[0]
 
     def locate(self, layout: list[str]) -> None:
         """Find where each member's column is in the columns of the data."""
