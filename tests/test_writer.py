@@ -384,4 +384,4 @@ def test_writer_writes_what_a_codec_returns_that_is_not_text() -> None:
     handle = StringIO()
     TsvWriter[Count](handle, codecs={int: codec}).write(Count("x", 3))
 
-    assert handle.getvalue() == "x\t3\n"
+    assert handle.getvalue() == f"x\t3{linesep}"
