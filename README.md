@@ -43,13 +43,21 @@ pip install typeline
 >>> from typeline import TsvWriter
 >>>
 >>> temp_file = NamedTemporaryFile(mode="w+t", suffix=".tsv")
+>>> records = [MyData(10, "test1", 0.2), MyData(20, "test2", None)]
 >>>
->>> with TsvWriter.from_path[MyData](temp_file.name) as writer:
-...     writer.write_header()
-...     writer.write(MyData(10, "test1", 0.2))
-...     writer.write(MyData(20, "test2", None))
+>>> with TsvWriter.from_path[MyData](temp_file.name, header=True) as writer:
+...     writer.write_all(records)
+>>>
+>>> print(Path(temp_file.name).read_text(), end="")
+field1	field2	field3
+10	test1	0.2
+20	test2	
 
 ```
+
+`write_all` writes records in order, and `write` writes one.
+With `header=True`, a writer writes its header once: before its first record, or alone when there are no records.
+Without it, the header is written by calling `write_header`.
 
 ### Reading
 
@@ -130,18 +138,17 @@ A codec's `missing` text, as `typeline.codecs.nullable` sets, takes the place of
 
 A reader skips lines that start with any of its `comment_prefixes`, and hands each one to `on_comment` as a `Comment` with its line number.
 A writer writes comments with `write_comment`, so comments can be passed straight from a reader to a writer and keep their places.
+Comments written before the header stay above it.
 Readers and writers take lines starting with `#` as comments by default.
 
 ```pycon
 >>> _ = Path(temp_file.name).write_text("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
 >>>
 >>> with (
-...     TsvWriter.from_path[MyData](f"{temp_file.name}.copy") as writer,
+...     TsvWriter.from_path[MyData](f"{temp_file.name}.copy", header=True) as writer,
 ...     TsvReader.from_path[MyData](temp_file.name, on_comment=writer.write_comment) as reader,
 ... ):
-...     writer.write_header()
-...     for record in reader:
-...         writer.write(record)
+...     writer.write_all(reader)
 >>>
 >>> print(Path(f"{temp_file.name}.copy").read_text(), end="")
 # made by a tool
