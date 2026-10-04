@@ -1,5 +1,6 @@
 import csv
 import re
+from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
@@ -45,6 +46,9 @@ DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 class WriterOptions(TypedDict, total=False, closed=True):
     """The options of a delimited data writer."""
 
+    header: bool
+    """Whether to write the header once, before the first record, or alone if none is written."""
+
     rename: Mapping[str, str]
     """A new column name for each field, by field name; a field not named here keeps its own."""
 
@@ -80,6 +84,7 @@ class DelimitedDataWriter(
         handle: TextIO,
         /,
         *,
+        header: bool = False,
         rename: Mapping[str, str] = NO_RENAME,
         none_field: str = "",
         codecs: Codecs = NO_CODECS,
@@ -91,6 +96,8 @@ class DelimitedDataWriter(
 
         Args:
             handle: a text stream to write delimited data to, opened with `newline=""`.
+            header: whether to write the header once, before the first record, or alone when the
+                writer is closed without writing a record. Comments written before then come first.
             rename: a new name for the column of each field, by field name; the header is
                 written with these names.
             none_field: the text written for None; with the default `""`, an empty `str | None`
@@ -118,6 +125,8 @@ class DelimitedDataWriter(
         if not comment_prefixes:
             raise ValueError("comment_prefixes must hold at least one prefix!")
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
+        self._writes_header: bool = header
+        self._header_pending: bool = header
 
         # Inspect the record type and save the fields and field names.
         self._field_type_map: dict[str, Any] = field_types(record_type)
@@ -154,6 +163,8 @@ class DelimitedDataWriter(
         self._quoting_writer: Any = csv.writer(
             handle, delimiter=self.delimiter, lineterminator=linesep, quoting=csv.QUOTE_ALL
         )
+        if header and not quoting:
+            self._refuse_unquotable(self._header)
 
     @override
     def __enter__(self) -> Self:
@@ -212,6 +223,7 @@ class DelimitedDataWriter(
 
         Each field is written as the `none_field` when None, or with the codec for its type. Other
         values are converted to builtin types, then written as-is when a string, or else as JSON.
+        With `header=True`, the header is written first if it has not been written yet.
         """
         if not isinstance(record, self._record_type):
             raise ValueError(
@@ -237,9 +249,19 @@ class DelimitedDataWriter(
                     + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
                 )
             row.extend(extra)
-        if not self._quoting or (row and row[0].startswith(self._comment_prefixes)):
-            self._write_row(row)
-            return
+        if not self._quoting:
+            self._refuse_unquotable(row)
+        if self._header_pending:
+            self.write_header()
+        if not self._quoting:
+            self._writer.writerow(row)
+        elif row and row[0].startswith(self._comment_prefixes):
+            self._quoting_writer.writerow(row)
+        else:
+            self._write_minimal(row)
+
+    def _write_minimal(self, row: list[str]) -> None:
+        """Write a row with minimal quoting, skipping the csv module when no field needs quoting."""
         try:
             line = self.delimiter.join(row)
         except TypeError:
@@ -257,15 +279,19 @@ class DelimitedDataWriter(
 
     def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
         """Write a row, quoting it whole when its first field would read as a comment."""
-        like_comment = bool(row) and row[0].startswith(self._comment_prefixes)
         if not self._quoting:
-            if like_comment or list(row) == [""] or any(map(self._needs_quoting, row)):
-                raise self._unquotable(row)
+            self._refuse_unquotable(row)
             self._writer.writerow(row)
-        elif like_comment:
+        elif row and row[0].startswith(self._comment_prefixes):
             self._quoting_writer.writerow(row)
         else:
             self._writer.writerow(row)
+
+    def _refuse_unquotable(self, row: list[str] | tuple[str, ...]) -> None:
+        """Refuse a row that cannot be written without quoting."""
+        like_comment = bool(row) and row[0].startswith(self._comment_prefixes)
+        if like_comment or list(row) == [""] or any(map(self._needs_quoting, row)):
+            raise self._unquotable(row)
 
     def _needs_quoting(self, text: str) -> bool:
         """Return whether text holds the delimiter or a line break, and so must be quoted."""
@@ -291,8 +317,25 @@ class DelimitedDataWriter(
             + f" because {reason}!"
         )
 
+    def write_all(self, records: Iterable[RecordType]) -> None:
+        """Write every record in order, after the header when `header=True`.
+
+        The header is written as this starts, so it is written even when there are no records.
+        """
+        if self._header_pending:
+            self.write_header()
+        for record in records:
+            self.write(record)
+
     def write_header(self) -> None:
-        """Write the header line to the open file-like object."""
+        """Write the header line to the open file-like object.
+
+        With `header=True`, the header is written only once, so this writes it now if it has not
+        been written yet, and otherwise does nothing.
+        """
+        if self._writes_header and not self._header_pending:
+            return
+        self._header_pending = False
         self._write_row(self._header)
 
     def write_comment(self, comment: str | Comment) -> None:
@@ -314,8 +357,12 @@ class DelimitedDataWriter(
             _ = self._handle.write(f"{text}{linesep}")
 
     def close(self) -> None:
-        """Close all opened resources."""
-        self._handle.close()
+        """Close all opened resources, first writing the header if it is still to be written."""
+        try:
+            if self._header_pending:
+                self.write_header()
+        finally:
+            self._handle.close()
 
     @SubscriptableClassmethod
     @classmethod
