@@ -253,8 +253,27 @@ class DelimitedDataWriter(
             self._refuse_unquotable(row)
         if self._header_pending:
             self.write_header()
-        if self._quoting and row and row[0].startswith(self._comment_prefixes):
+        if not self._quoting:
+            self._writer.writerow(row)
+        elif row and row[0].startswith(self._comment_prefixes):
             self._quoting_writer.writerow(row)
+        else:
+            self._write_minimal(row)
+
+    def _write_minimal(self, row: list[str]) -> None:
+        """Write a row with minimal quoting, skipping the csv module when no field needs quoting."""
+        try:
+            line = self.delimiter.join(row)
+        except TypeError:
+            self._writer.writerow(row)
+            return
+        # The csv module writes a row that needs no quoting as its fields joined by the delimiter.
+        if (
+            line
+            and not ('"' in line or "\n" in line or "\r" in line)
+            and line.count(self.delimiter) == len(row) - 1
+        ):
+            _ = self._handle.write(line + linesep)
         else:
             self._writer.writerow(row)
 
