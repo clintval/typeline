@@ -237,10 +237,23 @@ class DelimitedDataWriter(
                     + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
                 )
             row.extend(extra)
-        if self._quoting and not (row and row[0].startswith(self._comment_prefixes)):
-            self._writer.writerow(row)
-        else:
+        if not self._quoting or (row and row[0].startswith(self._comment_prefixes)):
             self._write_row(row)
+            return
+        try:
+            line = self.delimiter.join(row)
+        except TypeError:
+            self._writer.writerow(row)
+            return
+        # The csv module writes a row that needs no quoting as its fields joined by the delimiter.
+        if (
+            line
+            and not ('"' in line or "\n" in line or "\r" in line)
+            and line.count(self.delimiter) == len(row) - 1
+        ):
+            _ = self._handle.write(line + linesep)
+        else:
+            self._writer.writerow(row)
 
     def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
         """Write a row, quoting it whole when its first field would read as a comment."""

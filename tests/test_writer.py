@@ -1,9 +1,12 @@
 import csv
 import math
+import random
 from dataclasses import dataclass
 from enum import Enum
 from io import StringIO
+from os import linesep
 from pathlib import Path
+from typing import Any
 from typing import Optional  # pyright: ignore[reportDeprecated]
 from typing import cast
 
@@ -13,6 +16,7 @@ from typeline import CounterColumns
 from typeline import CsvReader
 from typeline import CsvWriter
 from typeline import ExtraColumns
+from typeline import FieldCodec
 from typeline import TsvReader
 from typeline import TsvWriter
 
@@ -310,3 +314,74 @@ def test_writer_writes_floats_that_are_not_finite_so_they_read_back() -> None:
     assert first == records[0]
     assert math.isnan(second.value)
     assert second.maybe is None
+
+
+@dataclass
+class Texts:
+    """A record of free text and any number of extra columns of text."""
+
+    first: str
+    second: str
+    extra: ExtraColumns = ()
+
+
+@dataclass
+class Lone:
+    """A record of one text field."""
+
+    text: str
+
+
+TRICKY: list[str] = ["", "a", "b c", ",", "\t", "|", '"', "'", "\n", "\r", "#", "é", " "]
+"""Pieces of text that the csv module quotes, or that sit next to text it quotes."""
+
+
+@pytest.mark.parametrize("kind", [CsvWriter, TsvWriter])
+def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
+    """Test that rows are written byte for byte as the csv module writes them, quoted or not."""
+    rng = random.Random(42)
+
+    def text() -> str:
+        return "".join(rng.choices(TRICKY, k=rng.randrange(4)))
+
+    records = [
+        Texts(text(), text(), tuple(text() for _ in range(rng.randrange(3)))) for _ in range(5000)
+    ]
+    lone = [Lone(piece) for piece in TRICKY]
+
+    expected = StringIO()
+    minimal = csv.writer(expected, delimiter=kind.delimiter, lineterminator=linesep)
+    every = csv.writer(
+        expected, delimiter=kind.delimiter, lineterminator=linesep, quoting=csv.QUOTE_ALL
+    )
+    rows = [[record.first, record.second, *record.extra] for record in records]
+    for row in [*rows, *([record.text] for record in lone)]:
+        (every if row[0].startswith("#") else minimal).writerow(row)
+
+    handle = StringIO()
+    texts_writer = kind[Texts](handle)
+    for record in records:
+        texts_writer.write(record)
+    lone_writer = kind[Lone](handle)
+    for lone_record in lone:
+        lone_writer.write(lone_record)
+
+    assert handle.getvalue() == expected.getvalue()
+
+
+def test_writer_writes_what_a_codec_returns_that_is_not_text() -> None:
+    """Test that a codec returning something other than text is written as the csv module would."""
+
+    @dataclass
+    class Count:
+        name: str
+        value: int
+
+    def as_is(value: Any) -> Any:
+        return value
+
+    codec: FieldCodec[int] = FieldCodec(from_text=int, into_text=as_is)
+    handle = StringIO()
+    TsvWriter[Count](handle, codecs={int: codec}).write(Count("x", 3))
+
+    assert handle.getvalue() == "x\t3\n"
