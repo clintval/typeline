@@ -5,6 +5,7 @@ from datetime import date
 from enum import Enum
 from enum import StrEnum
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +93,7 @@ def test_write_all_reads_a_generator_once_in_order() -> None:
     stream = StringIO()
     TsvWriter[Point](stream).write_all(points())
 
-    assert stream.getvalue() == "0\t0\n1\t1\n2\t4\n"
+    assert stream.getvalue() == "0\t0\n1\t1\n2\t4\n".replace("\n", linesep)
     assert seen == [0, 1, 2]
 
 
@@ -104,7 +105,7 @@ def test_write_all_appends_to_what_was_written() -> None:
     writer.write_all([Point(1, 1), Point(2, 4)])
     writer.write_all(Point(x, -x) for x in (3, 4))
 
-    assert stream.getvalue() == "0\t0\n1\t1\n2\t4\n3\t-3\n4\t-4\n"
+    assert stream.getvalue() == "0\t0\n1\t1\n2\t4\n3\t-3\n4\t-4\n".replace("\n", linesep)
 
 
 def test_write_all_stops_at_a_record_it_cannot_write() -> None:
@@ -115,7 +116,7 @@ def test_write_all_stops_at_a_record_it_cannot_write() -> None:
     with pytest.raises(ValueError, match=r"^Expected Point but found Coverage!$"):
         TsvWriter[Point](stream).write_all(records)
 
-    assert stream.getvalue() == "0\t0\n"
+    assert stream.getvalue() == f"0\t0{linesep}"
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from enum import Enum
+from os import linesep
 from pathlib import Path
 from typing import TextIO
 from typing import cast
@@ -58,7 +59,7 @@ def test_sample_sheet_round_trips_through_a_tsv(tmp_path: Path) -> None:
 
 def test_gzipped_sample_sheet_is_read_from_an_open_handle(tmp_path: Path) -> None:
     """Read a gzipped sample sheet by handing the reader any open text stream."""
-    with TsvWriter[Sample](gzip.open(tmp_path / "samples.tsv.gz", "wt")) as writer:
+    with TsvWriter[Sample](gzip.open(tmp_path / "samples.tsv.gz", "wt", newline="")) as writer:
         writer.write_header()
         for sample in SAMPLES:
             writer.write(sample)
@@ -382,7 +383,9 @@ def test_writing_a_report_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:
     writer.write_header()
     writer.write(SAMPLES[0])
 
-    assert capsys.readouterr().out == "name\treads\tpurity\ntumor\t1200\t0.62\n"
+    assert capsys.readouterr().out == (
+        "name\treads\tpurity\ntumor\t1200\t0.62\n".replace("\n", linesep)
+    )
 
 
 def test_error_messages_explain_what_went_wrong(tmp_path: Path) -> None:

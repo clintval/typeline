@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from typing import Annotated
 from typing import Any
@@ -431,7 +432,7 @@ def test_a_codec_missing_marker_replaces_the_none_field_on_read() -> None:
     for record in (Blocks([]), Blocks(None), Blocks([1, 2])):
         writer.write(record)
 
-    assert handle.getvalue() == '""\nNA\n"1,2"\n'
+    assert handle.getvalue() == '""\nNA\n"1,2"\n'.replace("\n", linesep)
     with CsvReader[Blocks](StringIO(handle.getvalue()), header=False, codecs=codecs) as reader:
         assert list(reader) == [Blocks([]), Blocks(None), Blocks([1, 2])]
 

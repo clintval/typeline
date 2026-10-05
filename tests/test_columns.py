@@ -2,6 +2,7 @@ from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from typing import Any
 from typing import TextIO
@@ -107,7 +108,7 @@ def test_writer_writes_the_named_columns_in_the_header() -> None:
     for record in RECORDS:
         writer.write(record)
 
-    assert handle.getvalue() == TEXT
+    assert handle.getvalue() == TEXT.replace("\n", linesep)
 
 
 @pytest.mark.parametrize(
@@ -201,7 +202,7 @@ def test_names_have_no_effect_without_a_header() -> None:
 
     handle = StringIO()
     TsvWriter[Bin](handle, rename=RENAME).write(RECORDS[0])
-    assert handle.getvalue() == line
+    assert handle.getvalue() == line.replace("\n", linesep)
 
 
 def test_fields_may_swap_names() -> None:
@@ -212,7 +213,7 @@ def test_fields_may_swap_names() -> None:
     writer.write_header()
     writer.write(Pair("a", "b"))
 
-    assert handle.getvalue() == "second\tfirst\na\tb\n"
+    assert handle.getvalue() == "second\tfirst\na\tb\n".replace("\n", linesep)
 
     with TsvReader[Pair](StringIO("first\tsecond\nb\ta\n"), rename=rename) as reader:
         assert list(reader) == [Pair("a", "b")]
@@ -226,7 +227,7 @@ def test_a_column_named_like_a_comment_is_quoted_at_the_start_of_a_header() -> N
     writer.write_header()
     writer.write(Interval("chr1", 10, 20))
 
-    assert handle.getvalue() == '"#chrom"\t"start"\t"end"\nchr1\t10\t20\n'
+    assert handle.getvalue() == '"#chrom"\t"start"\t"end"\nchr1\t10\t20\n'.replace("\n", linesep)
 
     with TsvReader[Interval](StringIO(handle.getvalue()), rename=rename) as reader:
         assert list(reader) == [Interval("chr1", 10, 20)]
@@ -241,7 +242,9 @@ def test_a_column_named_like_a_comment_with_other_comment_prefixes() -> None:
     writer.write_header()
     writer.write(Interval("chr1", 10, 20))
 
-    assert handle.getvalue() == "## source=tool\n#chrom\tstart\tend\nchr1\t10\t20\n"
+    assert handle.getvalue() == (
+        "## source=tool\n#chrom\tstart\tend\nchr1\t10\t20\n".replace("\n", linesep)
+    )
 
     with TsvReader[Interval](
         StringIO(handle.getvalue()), rename=rename, comment_prefixes=["##"]

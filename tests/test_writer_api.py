@@ -7,6 +7,7 @@ configured to fail on unused ignore comments, so these comments assert the error
 from collections.abc import Callable
 from dataclasses import dataclass
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from typing import Any
 from typing import TextIO
@@ -73,7 +74,7 @@ def test_constructor_subscripted_with_a_dataclass_writes_to_any_text_stream() ->
     writer = TsvWriter[MyData](stream)
     _ = assert_type(writer, TsvWriter[MyData])
     writer.write(RECORD)
-    assert stream.getvalue() == "1\t\n"
+    assert stream.getvalue() == f"1\t{linesep}"
 
 
 def test_subscripted_writer_classes_are_cached_and_keep_their_delimiter() -> None:
@@ -91,7 +92,7 @@ def test_subclass_of_a_subscripted_writer_keeps_its_record_type() -> None:
 
     stream = StringIO()
     MyDataWriter(stream).write(RECORD)
-    assert stream.getvalue() == "1,\n"
+    assert stream.getvalue() == f"1,{linesep}"
 
 
 def test_from_path_uses_the_defaults_of_a_subclass(tmp_path: Path) -> None:
