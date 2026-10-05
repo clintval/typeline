@@ -30,7 +30,7 @@ def test_csv_writer_is_set_to_use_comma(tmp_path: Path) -> None:
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1,field2,field3\n"
 
-    with CsvWriter[SimpleMetric](open(tmp_path / "test.txt", "w")) as writer:
+    with CsvWriter[SimpleMetric](open(tmp_path / "test.txt", "w", newline="")) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1,field2,field3\n"
@@ -43,7 +43,7 @@ def test_tsv_writer_is_set_to_use_tab(tmp_path: Path) -> None:
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1\tfield2\tfield3\n"
 
-    with TsvWriter[SimpleMetric](open(tmp_path / "test.txt", "w")) as writer:
+    with TsvWriter[SimpleMetric](open(tmp_path / "test.txt", "w", newline="")) as writer:
         assert (tmp_path / "test.txt").read_text() == ""
         writer.write_header()
     assert (tmp_path / "test.txt").read_text() == "field1\tfield2\tfield3\n"
@@ -238,7 +238,7 @@ def test_writer_quotes_a_row_that_would_read_as_a_comment() -> None:
     writer.write(Tagged("tracking", 2))
     writer.write(Tagged("plain", 3))
 
-    assert handle.getvalue() == '"#1"\t"1"\n"tracking"\t"2"\nplain\t3\n'
+    assert handle.getvalue() == '"#1"\t"1"\n"tracking"\t"2"\nplain\t3\n'.replace("\n", linesep)
     comment_prefixes = {"#", "track"}
     with TsvReader[Tagged](
         StringIO(handle.getvalue()), header=False, comment_prefixes=comment_prefixes
@@ -264,7 +264,7 @@ def test_writer_quotes_a_header_that_would_read_as_a_comment() -> None:
     handle = StringIO()
     TsvWriter[Region](handle, comment_prefixes=("_",)).write_header()
 
-    assert handle.getvalue() == '"_chrom"\n'
+    assert handle.getvalue() == f'"_chrom"{linesep}'
 
 
 def test_writer_header_refuses_unquotable_names_without_quoting() -> None:
@@ -308,7 +308,7 @@ def test_writer_writes_floats_that_are_not_finite_so_they_read_back() -> None:
     for record in records:
         writer.write(record)
 
-    assert handle.getvalue() == "inf\t-inf\nnan\t\n"
+    assert handle.getvalue() == "inf\t-inf\nnan\t\n".replace("\n", linesep)
     with TsvReader[Measure](StringIO(handle.getvalue()), header=False) as reader:
         first, second = list(reader)
     assert first == records[0]

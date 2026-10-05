@@ -76,7 +76,7 @@ def test_from_path_writes_compressed_files_by_their_extension(
         for record in RECORDS:
             writer.write(record)
 
-    assert decompress(path.read_bytes()).decode() == TEXT
+    assert decompress(path.read_bytes()).decode() == TEXT.replace("\n", linesep)
 
     with TsvReader.from_path[Sample](path) as reader:
         assert list(reader) == RECORDS

@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,9 @@ def test_writer_prefixes_comment_lines_that_do_not_have_a_prefix() -> None:
     writer.write_header()
     writer.write(Point(1, 2))
 
-    assert stream.getvalue() == "# made by a tool\n## already a comment\nx,y\n1,2\n"
+    assert stream.getvalue() == (
+        "# made by a tool\n## already a comment\nx,y\n1,2\n".replace("\n", linesep)
+    )
 
 
 def test_writer_keeps_comment_lines_that_start_with_any_of_its_prefixes() -> None:
@@ -65,7 +68,9 @@ def test_writer_keeps_comment_lines_that_start_with_any_of_its_prefixes() -> Non
     writer = TsvWriter[Point](stream, comment_prefixes=("#", "browser", "track"))
     writer.write_comment("track name=points\nbrowser position chr1\nsome notes")
 
-    assert stream.getvalue() == "track name=points\nbrowser position chr1\n# some notes\n"
+    assert stream.getvalue() == (
+        "track name=points\nbrowser position chr1\n# some notes\n".replace("\n", linesep)
+    )
 
 
 def test_writer_writes_a_comment_that_was_read_as_it_was() -> None:
@@ -74,7 +79,7 @@ def test_writer_writes_a_comment_that_was_read_as_it_was() -> None:
     writer = CsvWriter[Point](stream)
     writer.write_comment(Comment(line_number=1, text="browser position chr1"))
 
-    assert stream.getvalue() == "browser position chr1\n"
+    assert stream.getvalue() == f"browser position chr1{linesep}"
 
 
 def test_comments_stream_from_a_reader_into_a_writer(tmp_path: Path) -> None:
@@ -166,7 +171,7 @@ def test_writer_writes_an_empty_comment_as_a_bare_prefix() -> None:
     handle = StringIO()
     TsvWriter[Point](handle).write_comment("")
 
-    assert handle.getvalue() == "#\n"
+    assert handle.getvalue() == f"#{linesep}"
 
 
 def test_writer_splits_a_comment_only_at_line_breaks_the_reader_knows() -> None:
@@ -174,7 +179,7 @@ def test_writer_splits_a_comment_only_at_line_breaks_the_reader_knows() -> None:
     handle = StringIO()
     TsvWriter[Point](handle).write_comment("a\x1cb\r\nc\rd\n\ne\n")
 
-    assert handle.getvalue() == "# a\x1cb\n# c\n# d\n#\n# e\n"
+    assert handle.getvalue() == "# a\x1cb\n# c\n# d\n#\n# e\n".replace("\n", linesep)
 
 
 def test_writer_refuses_a_comment_object_holding_a_line_break() -> None:

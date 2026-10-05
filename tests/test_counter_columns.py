@@ -4,6 +4,7 @@ from dataclasses import make_dataclass
 from enum import Enum
 from enum import StrEnum
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from re import escape
 from typing import Any
@@ -207,7 +208,7 @@ def test_writer_writes_one_column_per_member_in_enum_order() -> None:
 
     assert handle.getvalue() == (
         "contig\tA\tC\tG\tT\tdepth\nchr1\t1\t0\t0\t4\t5\nchr2\t0\t0\t0\t0\t\n"
-    )
+    ).replace("\n", linesep)
 
 
 def test_writer_refuses_a_key_that_is_not_a_member() -> None:
@@ -242,7 +243,7 @@ def test_writer_accepts_member_values_as_keys() -> None:
 
     TsvWriter[Pileup](handle).write(Pileup("site1", counts))
 
-    assert handle.getvalue() == "site1\t0\t0\t3\t0\n"
+    assert handle.getvalue() == f"site1\t0\t0\t3\t0{linesep}"
 
 
 def test_round_trip(tmp_path: Path) -> None:
@@ -291,7 +292,7 @@ def test_extra_columns_are_written_after_the_member_columns() -> None:
     writer.write_header()
     writer.write(Scored("site1", Counter({Base.C: 2}), ("0.5",)))
 
-    assert handle.getvalue() == "name\tA\tC\tG\tT\nsite1\t0\t2\t0\t0\t0.5\n"
+    assert handle.getvalue() == "name\tA\tC\tG\tT\nsite1\t0\t2\t0\t0\t0.5\n".replace("\n", linesep)
 
 
 def test_other_fields_keep_their_codecs_hooks_and_none_field(tmp_path: Path) -> None:
@@ -417,7 +418,7 @@ def test_writer_accepts_the_text_of_a_plain_enum_member_as_a_key() -> None:
 
     TsvWriter[Tally](handle).write(record)
 
-    assert handle.getvalue() == "site1\t0\t0\t0\t0\t0\t4\t0\t0\n"
+    assert handle.getvalue() == f"site1\t0\t0\t0\t0\t0\t4\t0\t0{linesep}"
 
 
 def test_writer_refuses_a_member_counted_twice() -> None:

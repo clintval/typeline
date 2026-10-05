@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from io import StringIO
+from os import linesep
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -155,7 +156,7 @@ def test_writer_with_header_writes_it_once_before_the_first_record() -> None:
     writer.write(Point(3, 4))
     writer.write_all([Point(5, 6)])
 
-    assert stream.getvalue() == "x\ty\n1\t2\n3\t4\n5\t6\n"
+    assert stream.getvalue() == "x\ty\n1\t2\n3\t4\n5\t6\n".replace("\n", linesep)
 
 
 def test_writer_with_header_writes_earlier_comments_above_it() -> None:
@@ -167,7 +168,9 @@ def test_writer_with_header_writes_earlier_comments_above_it() -> None:
     writer.write_comment("between")
     writer.write(Point(3, 4))
 
-    assert stream.getvalue() == "# made by a tool\nx\ty\n1\t2\n# between\n3\t4\n"
+    assert stream.getvalue() == (
+        "# made by a tool\nx\ty\n1\t2\n# between\n3\t4\n".replace("\n", linesep)
+    )
 
 
 def test_writer_with_header_keeps_the_comments_of_a_file_in_place(tmp_path: Path) -> None:
@@ -207,7 +210,7 @@ def test_write_all_with_header_writes_the_header_to_an_open_stream() -> None:
     stream = StringIO()
     TsvWriter[Point](stream, header=True).write_all([])
 
-    assert stream.getvalue() == "x\ty\n"
+    assert stream.getvalue() == f"x\ty{linesep}"
 
 
 def test_writer_without_header_writes_an_empty_file(tmp_path: Path) -> None:
@@ -228,7 +231,7 @@ def test_write_header_with_header_writes_the_header_only_once() -> None:
     writer.write(Point(1, 2))
     writer.write_header()
 
-    assert stream.getvalue() == "x\ty\n# after the header\n1\t2\n"
+    assert stream.getvalue() == "x\ty\n# after the header\n1\t2\n".replace("\n", linesep)
 
 
 def test_write_header_without_header_writes_the_header_each_time() -> None:
@@ -239,7 +242,7 @@ def test_write_header_without_header_writes_the_header_each_time() -> None:
     writer.write(Point(1, 2))
     writer.write_header()
 
-    assert stream.getvalue() == "x\ty\n1\t2\nx\ty\n"
+    assert stream.getvalue() == "x\ty\n1\t2\nx\ty\n".replace("\n", linesep)
 
 
 @pytest.mark.parametrize(
@@ -266,7 +269,7 @@ def test_writer_with_header_writes_nothing_for_a_refused_record(
 
     assert stream.getvalue() == ""
     writer.write(Region("a", 1))
-    assert stream.getvalue() == "name\tstart\na\t1\n"
+    assert stream.getvalue() == "name\tstart\na\t1\n".replace("\n", linesep)
 
 
 def test_writer_with_header_writes_it_once_when_closed_twice(tmp_path: Path) -> None:
