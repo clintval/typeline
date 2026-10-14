@@ -7,6 +7,7 @@ from decimal import Decimal
 from enum import Enum
 from os import linesep
 from pathlib import Path
+from re import escape
 from typing import TextIO
 from typing import cast
 
@@ -394,12 +395,14 @@ def test_error_messages_explain_what_went_wrong(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"Missing from header: \['purity'\]\.$"):
         _ = TsvReader.from_path[Sample](tmp_path / "short-header.tsv")
 
-    _ = (tmp_path / "visits.tsv").write_text("P-001\tSeptember 29\t120.50\tY\t3;\n")
-    message = r"^Could not read field 'seen' of type date from text 'September 29' on line 1!$"
+    path = tmp_path / "visits.tsv"
+    _ = path.write_text("P-001\tSeptember 29\t120.50\tY\t3;\n")
+    message = (
+        r"^Could not read field 'seen' of type date from text 'September 29'"
+        + rf" on line 1 of '{escape(str(path))}'!$"
+    )
     with (
-        TsvReader.from_path[Visit](
-            tmp_path / "visits.tsv", header=False, codecs=VISIT_CODECS
-        ) as reader,
+        TsvReader.from_path[Visit](path, header=False, codecs=VISIT_CODECS) as reader,
         pytest.raises(ValueError, match=message),
     ):
         _ = list(reader)

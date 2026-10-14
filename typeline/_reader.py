@@ -38,6 +38,7 @@ from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import is_text
 from ._data_types import type_name
+from ._files import on_line
 from ._files import open_for_reading
 from .codecs import NO_CODECS
 from .codecs import Codecs
@@ -48,11 +49,6 @@ DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 """JSON literal keywords that require parsing."""
-
-
-def _on_line(line_number: int | None) -> str:
-    """Name the line a record starts on in an error, or nothing when it was not read from a file."""
-    return "" if line_number is None else f" on line {line_number}"
 
 
 class ReaderOptions(TypedDict, total=False, closed=True):
@@ -123,6 +119,8 @@ class DelimitedDataReader(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
+        name = getattr(handle, "name", None)
+        self._file_name: str | None = name if isinstance(name, str) else None
         self._record_line: int = 0
         self._record_type: type[RecordType] = record_type
         if isinstance(comment_prefixes, str):
@@ -180,7 +178,7 @@ class DelimitedDataReader(
             )
             if repeated:
                 raise ValueError(
-                    f"Columns of header repeat a name on line {self._record_line}!"
+                    f"Columns of header repeat a name{on_line(self._record_line, self._file_name)}!"
                     + f" Header: {found}. Repeated in header: {repeated}."
                 )
             present: set[str] = set(found)
@@ -189,7 +187,7 @@ class DelimitedDataReader(
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     f"Columns of header do not match fields of {record_type.__name__}"
-                    + f" on line {self._record_line}! Header: {found}."
+                    + f"{on_line(self._record_line, self._file_name)}! Header: {found}."
                     + f" Columns of {record_type.__name__}: {self._columns}."
                     + (f" Missing from header: {missing}." if missing else "")
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
@@ -257,6 +255,7 @@ class DelimitedDataReader(
         if codec is not None:
             missing = none_field if codec.missing is None else codec.missing
             where = in_column(name, self._column_of[name])
+            file_name = self._file_name
 
             def read_with_codec(text: str, line_number: int | None) -> Any:
                 if text == missing:
@@ -266,7 +265,7 @@ class DelimitedDataReader(
                 except Exception as exception:
                     raise ValueError(
                         f"Could not read field '{name}' of type {type_name(field_type)} from text"
-                        + f" '{text}'{where}{_on_line(line_number)}!"
+                        + f" '{text}'{where}{on_line(line_number, file_name)}!"
                     ) from exception
 
             return read_with_codec
@@ -312,13 +311,14 @@ class DelimitedDataReader(
         has_counters = bool(counters)
         record_type = self._record_type
         convert_hook = self._convert_hook
+        file_name = self._file_name
 
         def read_record(row: list[str], line_number: int | None) -> RecordType:
             if len(row) != width and (extra_field is None or len(row) < width):
                 at_least = "" if extra_field is None else "at least "
                 raise ValueError(
                     f"Expected {at_least}{width} columns but found {len(row)}"
-                    + f"{_on_line(line_number)} for record type: {record_type.__name__}."
+                    + f"{on_line(line_number, file_name)} for record type: {record_type.__name__}."
                 )
             values = row if positions is None else [row[index] for index in positions]
             preprocessed = {
@@ -331,7 +331,7 @@ class DelimitedDataReader(
                 extra = [row[index] for index in extra_positions]
                 preprocessed[extra_field] = (*extra, *row[width:])
             if has_counters:
-                preprocessed.update(counters.read(row, line_number))
+                preprocessed.update(counters.read(row, line_number, file_name))
             try:
                 return convert(
                     preprocessed, record_type, strict=False, str_keys=True, dec_hook=convert_hook
@@ -339,7 +339,7 @@ class DelimitedDataReader(
             except ValidationError as exception:
                 raise ValidationError(
                     f"Could not build {record_type.__name__} from {preprocessed}"
-                    + f"{_on_line(line_number)}! {exception}"
+                    + f"{on_line(line_number, file_name)}! {exception}"
                 ) from exception
 
         return read_record

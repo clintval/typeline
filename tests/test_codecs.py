@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from io import StringIO
 from os import linesep
 from pathlib import Path
+from re import escape
 from typing import Annotated
 from typing import Any
 from typing import Optional  # pyright: ignore[reportDeprecated]
@@ -248,7 +249,10 @@ def test_reader_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
     _ = path.write_text('name,color\nfoo,"1,2,3"\nbar,purple\n')
 
     with CsvReader.from_path[MyData](path, codecs={Color: COLOR}) as reader:
-        message = r"^Could not read field 'color' of type Color from text 'purple' on line 3!"
+        message = (
+            r"^Could not read field 'color' of type Color from text 'purple'"
+            + rf" on line 3 of '{escape(str(path))}'!$"
+        )
         with pytest.raises(ValueError, match=message) as error:
             _ = list(reader)
     assert isinstance(error.value.__cause__, ValueError)

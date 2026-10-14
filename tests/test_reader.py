@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from enum import Enum
 from io import StringIO
 from pathlib import Path
+from re import escape
 from typing import Literal
 from typing import NewType
 from typing import Optional  # pyright: ignore[reportDeprecated]
@@ -120,17 +121,17 @@ def test_a_complicated_record_round_trips(tmp_path: Path) -> None:
 def test_reader_raises_exception_for_a_record_with_the_wrong_number_of_fields(
     tmp_path: Path, line: str, found: int
 ) -> None:
-    """Test the reader names the line and field counts when a record is too short or too long."""
-    _ = (tmp_path / "test.txt").write_text(
-        "\n".join(["field1\tfield2\tfield3", "1\tname\t0.2", line])
-    )
+    """Test the reader names the file, line and field counts when a record has the wrong width."""
+    path = tmp_path / "test.txt"
+    _ = path.write_text("\n".join(["field1\tfield2\tfield3", "1\tname\t0.2", line]))
 
+    message = (
+        rf"^Expected 3 columns but found {found} on line 3 of '{escape(str(path))}'"
+        + r" for record type: SimpleMetric\.$"
+    )
     with (
-        TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader,
-        pytest.raises(
-            ValueError,
-            match=f"Expected 3 columns but found {found} on line 3 for record type: SimpleMetric.",
-        ),
+        TsvReader.from_path[SimpleMetric](path) as reader,
+        pytest.raises(ValueError, match=message),
     ):
         _ = list(reader)
 
@@ -175,15 +176,16 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
         field1: str
         field2: list[int]
 
-    _ = (tmp_path / "test.txt").write_text("field1,field2\nmy-name,null\n")
+    path = tmp_path / "test.txt"
+    _ = path.write_text("field1,field2\nmy-name,null\n")
 
     with (
-        CsvReader.from_path[MyData](tmp_path / "test.txt") as reader,
+        CsvReader.from_path[MyData](path) as reader,
         pytest.raises(
             ValidationError,
             match=(
                 r"^Could not build MyData from \{\'field1\'\: \'my\-name\'"
-                + r".*\'field2\'\: None\} on line 2!"
+                + rf".*\'field2\'\: None\}} on line 2 of '{escape(str(path))}'!"
                 + r".*Expected \`array\`\, got \`null\`"
             ),
         ),
