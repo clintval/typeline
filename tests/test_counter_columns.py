@@ -81,7 +81,8 @@ def test_reader_refuses_a_header_missing_member_columns(tmp_path: Path) -> None:
     _ = path.write_text("name\tT\tA\nsite1\t4\t1\n")
 
     message = (
-        r"^Columns of header do not match fields of Pileup on line 1!"
+        r"^Columns of header do not match fields of Pileup"
+        + rf" on line 1 of '{escape(str(path))}'!"
         + r" Header: \['name', 'T', 'A'\]\."
         + r" Columns of Pileup: \['name', 'A', 'C', 'G', 'T'\]\."
         + r" Missing from header: \['C', 'G'\]\.$"
@@ -158,7 +159,7 @@ def test_reader_refuses_a_count_that_is_not_an_integer(tmp_path: Path, text: str
 
     message = (
         r"^Could not read column 'C' of field 'counts' as a count"
-        + rf" from '{escape(text)}' on line 3!$"
+        + rf" from '{escape(text)}' on line 3 of '{escape(str(path))}'!$"
     )
     with (
         TsvReader.from_path[Pileup](path) as reader,
@@ -183,7 +184,10 @@ def test_reader_refuses_a_repeated_member_column(tmp_path: Path) -> None:
     path = tmp_path / "pileup.tsv"
     _ = path.write_text("name\tA\tC\tA\n")
 
-    message = r"^Columns of header repeat a name on line 1! .* Repeated in header: \['A'\].$"
+    message = (
+        rf"^Columns of header repeat a name on line 1 of '{escape(str(path))}'!"
+        + r" .* Repeated in header: \['A'\].$"
+    )
     with pytest.raises(ValueError, match=message):
         _ = TsvReader.from_path[Pileup](path)
 

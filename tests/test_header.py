@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from io import StringIO
 from os import linesep
 from pathlib import Path
+from re import escape
 from time import perf_counter
 from typing import Any
 from typing import TextIO
@@ -55,20 +56,28 @@ def test_reader_keeps_unnamed_columns_in_extra_columns_in_file_order(tmp_path: P
 
 def test_reader_refuses_a_header_that_repeats_a_column(tmp_path: Path) -> None:
     """Test that a header naming a column twice is refused, since the column would be ambiguous."""
-    _ = (tmp_path / "test.tsv").write_text("field1\tfield2\tfield3\tfield1\n")
+    path = tmp_path / "test.tsv"
+    _ = path.write_text("field1\tfield2\tfield3\tfield1\n")
 
-    message = r"^Columns of header repeat a name on line 1! .* Repeated in header: \['field1'\]\.$"
+    message = (
+        rf"^Columns of header repeat a name on line 1 of '{escape(str(path))}'!"
+        + r" .* Repeated in header: \['field1'\]\.$"
+    )
     with pytest.raises(ValueError, match=message):
-        _ = TsvReader.from_path[SimpleMetric](tmp_path / "test.tsv")
+        _ = TsvReader.from_path[SimpleMetric](path)
 
 
 def test_reader_still_counts_fields_on_each_row_of_a_reordered_file(tmp_path: Path) -> None:
     """Test that a row of a reordered file with the wrong number of fields is still reported."""
-    _ = (tmp_path / "test.tsv").write_text("field3\tfield1\tfield2\n0.2\t1\n")
+    path = tmp_path / "test.tsv"
+    _ = path.write_text("field3\tfield1\tfield2\n0.2\t1\n")
 
-    message = r"^Expected 3 columns but found 2 on line 2 for record type: SimpleMetric\.$"
+    message = (
+        rf"^Expected 3 columns but found 2 on line 2 of '{escape(str(path))}'"
+        + r" for record type: SimpleMetric\.$"
+    )
     with (
-        TsvReader.from_path[SimpleMetric](tmp_path / "test.tsv") as reader,
+        TsvReader.from_path[SimpleMetric](path) as reader,
         pytest.raises(ValueError, match=message),
     ):
         _ = list(reader)

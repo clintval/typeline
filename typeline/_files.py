@@ -38,6 +38,10 @@ class _Prefixed(io.RawIOBase):
         self._prefix: bytes = prefix
         self._rest: io.BufferedReader = rest
 
+    @property
+    def name(self) -> Any:
+        return self._rest.name
+
     @override
     def readable(self) -> bool:
         return True
@@ -73,13 +77,21 @@ class _ClosesSource(io.BufferedIOBase):
             self.source.close()
 
 
+class _NamedAfterSource(_ClosesSource):
+    """A decompressed stream named after the stream it decompresses, as gzip names itself."""
+
+    @property
+    def name(self) -> Any:
+        return self.source.name
+
+
 class _GzipFile(_ClosesSource, gzip.GzipFile): ...
 
 
-class _BZ2File(_ClosesSource, bz2.BZ2File): ...
+class _BZ2File(_NamedAfterSource, bz2.BZ2File): ...
 
 
-class _LZMAFile(_ClosesSource, lzma.LZMAFile): ...
+class _LZMAFile(_NamedAfterSource, lzma.LZMAFile): ...
 
 
 DECOMPRESSORS: dict[str, Callable[[io.BufferedReader], _GzipFile | _BZ2File | _LZMAFile]] = {
@@ -97,6 +109,15 @@ def _start(source: io.BufferedReader) -> tuple[bytes, io.BufferedReader]:
         return start, source
     start = source.read(SIGNATURE_LENGTH)
     return start, io.BufferedReader(_Prefixed(start, source))
+
+
+def on_line(line_number: int | None, file_name: str | None) -> str:
+    """Name the line a record starts on in an error, and its file when it has a name."""
+    if line_number is None:
+        return ""
+    if file_name is None:
+        return f" on line {line_number}"
+    return f" on line {line_number} of '{file_name}'"
 
 
 def open_for_reading(path: Path | str) -> TextIO:
