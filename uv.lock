@@ -601,19 +601,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pytest-doctestplus"
-version = "1.7.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "packaging" },
-    { name = "pytest" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/59/43/6db18218cdfa15bd03cba3292345223925011ba7428e6183da97c6b1dcb1/pytest_doctestplus-1.7.1.tar.gz", hash = "sha256:64ae16dbda66c3db775ef596828d8d7adda09c6f34dd85099c119e4ff8cfe5b6", size = 50286, upload-time = "2026-01-26T22:13:46.54Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f4/72/8e70c7c3238cba0afa8dbef94a1ce7d88ecd0fab3d8d0da394a1c3964a41/pytest_doctestplus-1.7.1-py3-none-any.whl", hash = "sha256:18c0ff78d7ad08a15f415b153b3c407078c8a8c055ceb9055b5c7be5eb7c80be", size = 25567, upload-time = "2026-01-26T22:13:45.148Z" },
-]
-
-[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -691,6 +678,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/78/fa/0f9c2020dc316c53d983be011720b8157cc052b97e3f4dfa7db6d0f880a6/ruff-0.16.10-py3-none-win32.whl", hash = "sha256:2a12e01cb9156c10c466f63b46eaae5ecea28dfbd21b5836353ae498e7d1349a", size = 10139176, upload-time = "2026-10-01T18:03:13.267Z" },
     { url = "https://files.pythonhosted.org/packages/99/29/cfb0df9448d4d4ad48c2de029ada9ebd71baa6da983a6c77ee6c6cd0fe82/ruff-0.16.10-py3-none-win_amd64.whl", hash = "sha256:97f2015c92aa97105b0eab19eb5d224884399281cfc5da86a92db4ab5e7fb2ca", size = 10584734, upload-time = "2026-10-01T18:03:16.006Z" },
     { url = "https://files.pythonhosted.org/packages/fc/05/c16957eb287c3fc062e032619a25868d93d408a844b725bcf514f7a378ff/ruff-0.16.10-py3-none-win_arm64.whl", hash = "sha256:25a65fe998c4e6861ec079ada5826a2fc605e6cbccbe9dcd7fac1f54e791621b", size = 10366440, upload-time = "2026-10-01T18:03:19.04Z" },
+]
+
+[[package]]
+name = "sybil"
+version = "10.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/03/50135b55ba14509654b2f624eaf7e318d654182ebe9f712fb74e98e418d0/sybil-10.1.0.tar.gz", hash = "sha256:062249c8886a0ab19e45d1c3afd5631ec806e7a95cf5153c96560f5e47756cbd", size = 82376, upload-time = "2026-06-13T09:40:44.584Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f2/fe/4094754188b52f8333ba24b377192918936597769a574a9dd8446f69e1f1/sybil-10.1.0-py3-none-any.whl", hash = "sha256:b3015f7e0ca3fe197ae67117c440710b62ea500078d4414ebd0ab804d12c9897", size = 40930, upload-time = "2026-06-13T09:40:43.139Z" },
+]
+
+[package.optional-dependencies]
+pytest = [
+    { name = "pytest" },
 ]
 
 [[package]]
@@ -797,8 +798,8 @@ dev = [
     { name = "poethepoet" },
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "pytest-doctestplus" },
     { name = "ruff" },
+    { name = "sybil", extra = ["pytest"] },
     { name = "ty" },
     { name = "validate-pyproject", extra = ["all"] },
 ]
@@ -816,8 +817,8 @@ dev = [
     { name = "poethepoet", specifier = "~=0.48" },
     { name = "pytest", specifier = "~=9.1" },
     { name = "pytest-cov", specifier = "~=7.1" },
-    { name = "pytest-doctestplus", specifier = "~=1.7" },
     { name = "ruff", specifier = "~=0.16" },
+    { name = "sybil", extras = ["pytest"], specifier = "~=10.1" },
     { name = "ty", specifier = "~=0.0.83" },
     { name = "validate-pyproject", extras = ["all"], specifier = "~=0.26" },
 ]

@@ -24,35 +24,31 @@ pip install typeline
 
 ### Defining a Record
 
-```pycon
->>> from dataclasses import dataclass
->>>
->>> @dataclass
-... class MyData:
-...     field1: int
-...     field2: str
-...     field3: float | None
+```python
+from dataclasses import dataclass
 
+@dataclass
+class MyData:
+    field1: int
+    field2: str
+    field3: float | None
 ```
 
 ### Writing
 
-```pycon
->>> from pathlib import Path
->>> from tempfile import NamedTemporaryFile
->>> from typeline import TsvWriter
->>>
->>> temp_file = NamedTemporaryFile(mode="w+t", suffix=".tsv")
->>> records = [MyData(10, "test1", 0.2), MyData(20, "test2", None)]
->>>
->>> with TsvWriter.from_path[MyData](temp_file.name, header=True) as writer:
-...     writer.write_all(records)
->>>
->>> print(Path(temp_file.name).read_text(), end="")
-field1	field2	field3
-10	test1	0.2
-20	test2	
+```python
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
+from typeline import TsvWriter
+
+temp_file = NamedTemporaryFile(mode="w+t", suffix=".tsv")
+records = [MyData(10, "test1", 0.2), MyData(20, "test2", None)]
+
+with TsvWriter.from_path[MyData](temp_file.name, header=True) as writer:
+    writer.write_all(records)
+
+assert Path(temp_file.name).read_text() == "field1\tfield2\tfield3\n10\ttest1\t0.2\n20\ttest2\t\n"
 ```
 
 `write_all` writes records in order, and `write` writes one.
@@ -61,24 +57,19 @@ Without it, the header is written by calling `write_header`.
 
 ### Reading
 
-```pycon
->>> from typeline import TsvReader
->>>
->>> with TsvReader.from_path[MyData](temp_file.name) as reader:
-...     for record in reader:
-...         print(record)
-MyData(field1=10, field2='test1', field3=0.2)
-MyData(field1=20, field2='test2', field3=None)
+```python
+from typeline import TsvReader
 
+with TsvReader.from_path[MyData](temp_file.name) as reader:
+    assert list(reader) == records
 ```
 
 A reader expects a header by default, and matches its columns to fields by name, in any order.
 Pass `header=False` to read columns in field order.
 A reader from `from_path` closes its file once it is read to the end, so reading everything into a list needs no `with` block.
 
-```pycon
->>> records = list(TsvReader.from_path[MyData](temp_file.name))
-
+```python
+assert list(TsvReader.from_path[MyData](temp_file.name)) == records
 ```
 
 ### Any Text Stream
@@ -87,13 +78,11 @@ To use an open text stream instead of a path, subscript the reader or writer cla
 
 Leaving the `with` block closes the stream.
 
-```pycon
->>> from io import StringIO
->>>
->>> with TsvReader[MyData](StringIO("10\ttest1\t0.2\n"), header=False) as reader:
-...     print(list(reader))
-[MyData(field1=10, field2='test1', field3=0.2)]
+```python
+from io import StringIO
 
+with TsvReader[MyData](StringIO("10\ttest1\t0.2\n"), header=False) as reader:
+    assert list(reader) == [MyData(10, "test1", 0.2)]
 ```
 
 ### Decoding a Line
@@ -103,12 +92,10 @@ It reads nothing from the reader's stream, so one reader can decode many lines, 
 A reader built on an empty stream has no header, so it decodes columns in field order.
 A blank line, a comment, or text holding more than one record is refused with a `ValueError`.
 
-```pycon
->>> reader = TsvReader[MyData](StringIO())
->>>
->>> reader.decode("10\ttest1\t0.2\n")
-MyData(field1=10, field2='test1', field3=0.2)
+```python
+reader = TsvReader[MyData](StringIO())
 
+assert reader.decode("10\ttest1\t0.2\n") == MyData(10, "test1", 0.2)
 ```
 
 ### Files
@@ -117,14 +104,12 @@ MyData(field1=10, field2='test1', field3=0.2)
 It reads gzip, bzip2, and xz files, which it recognizes by their contents, and writes them when the path ends in `.gz`, `.bz2`, or `.xz`.
 It opens a path only once, so it also reads and writes pipes such as FIFOs, `/dev/stdin`, and `/dev/stdout`.
 
-```pycon
->>> with TsvWriter.from_path[MyData](f"{temp_file.name}.gz") as writer:
-...     writer.write(MyData(10, "test1", 0.2))
->>>
->>> with TsvReader.from_path[MyData](f"{temp_file.name}.gz", header=False) as reader:
-...     print(list(reader))
-[MyData(field1=10, field2='test1', field3=0.2)]
+```python
+with TsvWriter.from_path[MyData](f"{temp_file.name}.gz") as writer:
+    writer.write(MyData(10, "test1", 0.2))
 
+with TsvReader.from_path[MyData](f"{temp_file.name}.gz", header=False) as reader:
+    assert list(reader) == [MyData(10, "test1", 0.2)]
 ```
 
 ### Missing Values
@@ -141,20 +126,16 @@ A writer writes comments with `write_comment`, so comments can be passed straigh
 Comments written before the header stay above it.
 Readers and writers take lines starting with `#` as comments by default.
 
-```pycon
->>> _ = Path(temp_file.name).write_text("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
->>>
->>> with (
-...     TsvWriter.from_path[MyData](f"{temp_file.name}.copy", header=True) as writer,
-...     TsvReader.from_path[MyData](temp_file.name, on_comment=writer.write_comment) as reader,
-... ):
-...     writer.write_all(reader)
->>>
->>> print(Path(f"{temp_file.name}.copy").read_text(), end="")
-# made by a tool
-field1	field2	field3
-10	test1	0.2
+```python
+Path(temp_file.name).write_text("# made by a tool\nfield1\tfield2\tfield3\n10\ttest1\t0.2\n")
 
+with (
+    TsvWriter.from_path[MyData](f"{temp_file.name}.copy", header=True) as writer,
+    TsvReader.from_path[MyData](temp_file.name, on_comment=writer.write_comment) as reader,
+):
+    writer.write_all(reader)
+
+assert Path(f"{temp_file.name}.copy").read_text() == Path(temp_file.name).read_text()
 ```
 
 ### Extra Columns
@@ -162,21 +143,19 @@ field1	field2	field3
 A record can end with an `ExtraColumns` field, which holds as text the columns no other field takes, in file order.
 Readers fill it, writers write it back, and a header only needs to name the other fields.
 
-```pycon
->>> from typeline import ExtraColumns
->>>
->>> @dataclass
-... class Region:
-...     name: str
-...     start: int
-...     extra: ExtraColumns = ()
->>>
->>> _ = Path(temp_file.name).write_text("exon1\t10\n\nexon2\t20\t0.9\tHIGH\n")
->>>
->>> with TsvReader.from_path[Region](temp_file.name, header=False) as reader:
-...     print(list(reader))
-[Region(name='exon1', start=10, extra=()), Region(name='exon2', start=20, extra=('0.9', 'HIGH'))]
+```python
+from typeline import ExtraColumns
 
+@dataclass
+class Region:
+    name: str
+    start: int
+    extra: ExtraColumns = ()
+
+Path(temp_file.name).write_text("exon1\t10\n\nexon2\t20\t0.9\tHIGH\n")
+
+with TsvReader.from_path[Region](temp_file.name, header=False) as reader:
+    assert list(reader) == [Region("exon1", 10), Region("exon2", 20, ("0.9", "HIGH"))]
 ```
 
 ### Counter Columns
@@ -187,36 +166,33 @@ Writers write every member's count in enum order, where the field sits among the
 Readers find the member columns by name in a header, wherever they sit, or in enum order at the field's place when there is no header.
 Every member needs a column, and every count must be a non-negative integer.
 
-```pycon
->>> from collections import Counter
->>> from enum import StrEnum
->>> from typeline import CounterColumns
->>>
->>> class Base(StrEnum):
-...     A = "A"
-...     C = "C"
-...     G = "G"
-...     T = "T"
->>>
->>> @dataclass
-... class Pileup:
-...     position: int
-...     counts: CounterColumns[Base]
->>>
->>> with TsvWriter.from_path[Pileup](temp_file.name) as writer:
-...     writer.write_header()
-...     writer.write(Pileup(100, Counter({Base.A: 12, Base.G: 3})))
->>>
->>> print(Path(temp_file.name).read_text(), end="")
-position	A	C	G	T
-100	12	0	3	0
->>>
->>> _ = Path(temp_file.name).write_text("position\tT\tG\tC\tA\n101\t2\t0\t0\t9\n")
->>>
->>> with TsvReader.from_path[Pileup](temp_file.name) as reader:
-...     print(list(reader))
-[Pileup(position=101, counts=Counter({<Base.A: 'A'>: 9, <Base.T: 'T'>: 2, <Base.C: 'C'>: 0, <Base.G: 'G'>: 0}))]
+```python
+from collections import Counter
+from enum import StrEnum
 
+from typeline import CounterColumns
+
+class Base(StrEnum):
+    A = "A"
+    C = "C"
+    G = "G"
+    T = "T"
+
+@dataclass
+class Pileup:
+    position: int
+    counts: CounterColumns[Base]
+
+with TsvWriter.from_path[Pileup](temp_file.name) as writer:
+    writer.write_header()
+    writer.write(Pileup(100, Counter({Base.A: 12, Base.G: 3})))
+
+assert Path(temp_file.name).read_text() == "position\tA\tC\tG\tT\n100\t12\t0\t3\t0\n"
+
+Path(temp_file.name).write_text("position\tT\tG\tC\tA\n101\t2\t0\t0\t9\n")
+
+with TsvReader.from_path[Pileup](temp_file.name) as reader:
+    assert list(reader) == [Pileup(101, Counter({Base.A: 9, Base.T: 2, Base.C: 0, Base.G: 0}))]
 ```
 
 With an `ExtraColumns` field, the columns that are neither fields nor member columns are kept as extra columns.
@@ -227,28 +203,24 @@ A column is named after its field, unless `rename` gives it another name.
 Writers can write these names in the header, and readers will match a pre-existing header to them, in any column order.
 A column name can be any text, like `%GC` or `mean depth`, and can be made at runtime too.
 
-```pycon
->>> @dataclass
-... class Coverage:
-...     sample: str
-...     gc: float
-...     frac_below_min: float
->>>
->>> min_depth = 20
->>> rename = {"gc": "%GC", "frac_below_min": f"frac_below_{min_depth}x"}
->>>
->>> with TsvWriter.from_path[Coverage](temp_file.name, rename=rename) as writer:
-...     writer.write_header()
-...     writer.write(Coverage("s1", 41.2, 0.03))
->>>
->>> print(Path(temp_file.name).read_text(), end="")
-sample	%GC	frac_below_20x
-s1	41.2	0.03
->>>
->>> with TsvReader.from_path[Coverage](temp_file.name, rename=rename) as reader:
-...     print(list(reader))
-[Coverage(sample='s1', gc=41.2, frac_below_min=0.03)]
+```python
+@dataclass
+class Coverage:
+    sample: str
+    gc: float
+    frac_below_min: float
 
+min_depth = 20
+rename = {"gc": "%GC", "frac_below_min": f"frac_below_{min_depth}x"}
+
+with TsvWriter.from_path[Coverage](temp_file.name, rename=rename) as writer:
+    writer.write_header()
+    writer.write(Coverage("s1", 41.2, 0.03))
+
+assert Path(temp_file.name).read_text() == "sample\t%GC\tfrac_below_20x\ns1\t41.2\t0.03\n"
+
+with TsvReader.from_path[Coverage](temp_file.name, rename=rename) as reader:
+    assert list(reader) == [Coverage("s1", 41.2, 0.03)]
 ```
 
 A field has one column, so once it is given another name, that name replaces the field's name and the old one is retired.
@@ -263,17 +235,14 @@ Readers and writers quote fields with `"` as CSV does, so text can hold the deli
 For formats without quoting, `quoting=False` reads and writes `"` as ordinary text.
 Without quoting, a writer refuses text that holds the delimiter or a line break with a `ValueError`.
 
-```pycon
->>> with TsvWriter.from_path[Region](temp_file.name, quoting=False) as writer:
-...     writer.write(Region('"exon1', 10, ('say "hi"',)))
->>>
->>> print(Path(temp_file.name).read_text(), end="")
-"exon1	10	say "hi"
->>>
->>> with TsvReader.from_path[Region](temp_file.name, header=False, quoting=False) as reader:
-...     print(list(reader))
-[Region(name='"exon1', start=10, extra=('say "hi"',))]
+```python
+with TsvWriter.from_path[Region](temp_file.name, quoting=False) as writer:
+    writer.write(Region('"exon1', 10, ('say "hi"',)))
 
+assert Path(temp_file.name).read_text() == '"exon1\t10\tsay "hi"\n'
+
+with TsvReader.from_path[Region](temp_file.name, header=False, quoting=False) as reader:
+    assert list(reader) == [Region('"exon1', 10, ('say "hi"',))]
 ```
 
 ### Custom Field Formats
@@ -282,106 +251,101 @@ Lists, tuples, sets, dicts, and nested dataclasses are written as JSON by defaul
 For any other text format, a `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
 Helpers in `typeline.codecs` cover common formats.
 
-```pycon
->>> from datetime import date
->>> from typeline import Codecs
->>> from typeline.codecs import boolean, delimited
->>>
->>> @dataclass
-... class Visit:
-...     patient: str
-...     seen: date
-...     consented: bool
-...     blocks: list[int]
->>>
->>> codecs: Codecs = {
-...     bool: boolean(true="Y", false="N"),
-...     list[int]: delimited(int, sep=";"),
-... }
->>>
->>> with TsvWriter.from_path[Visit](temp_file.name, codecs=codecs) as writer:
-...     writer.write(Visit("P-001", date(2026, 9, 29), True, [3, 1, 4]))
->>>
->>> print(Path(temp_file.name).read_text(), end="")
-P-001	2026-09-29	Y	3;1;4
->>>
->>> with TsvReader.from_path[Visit](temp_file.name, header=False, codecs=codecs) as reader:
-...     print(list(reader))
-[Visit(patient='P-001', seen=datetime.date(2026, 9, 29), consented=True, blocks=[3, 1, 4])]
+```python
+from datetime import date
 
+from typeline import Codecs
+from typeline.codecs import boolean, delimited
+
+@dataclass
+class Visit:
+    patient: str
+    seen: date
+    consented: bool
+    blocks: list[int]
+
+codecs: Codecs = {
+    bool: boolean(true="Y", false="N"),
+    list[int]: delimited(int, sep=";"),
+}
+
+with TsvWriter.from_path[Visit](temp_file.name, codecs=codecs) as writer:
+    writer.write(Visit("P-001", date(2026, 9, 29), True, [3, 1, 4]))
+
+assert Path(temp_file.name).read_text() == "P-001\t2026-09-29\tY\t3;1;4\n"
+
+with TsvReader.from_path[Visit](temp_file.name, header=False, codecs=codecs) as reader:
+    assert list(reader) == [Visit("P-001", date(2026, 9, 29), True, [3, 1, 4])]
 ```
 
 Custom types nested anywhere inside a field, like a `list[Interval]`, are handled by `enc_hook`, which turns such an object into builtin values, and `dec_hook`, which builds it back from them.
 Each hook raises `NotImplementedError` for types it does not handle.
 
-```pycon
->>> class Interval:
-...     def __init__(self, start: int, end: int) -> None:
-...         self.start = start
-...         self.end = end
-...
-...     def __repr__(self) -> str:
-...         return f"Interval({self.start}, {self.end})"
->>>
->>> def enc_hook(obj: object) -> object:
-...     if isinstance(obj, Interval):
-...         return [obj.start, obj.end]
-...     raise NotImplementedError
->>>
->>> def dec_hook(kind: type, obj: object) -> object:
-...     if kind is Interval:
-...         return Interval(*obj)
-...     raise NotImplementedError
->>>
->>> @dataclass
-... class Target:
-...     gene: str
-...     intervals: list[Interval]
->>>
->>> with TsvWriter.from_path[Target](temp_file.name, enc_hook=enc_hook) as writer:
-...     writer.write(Target("BRCA1", [Interval(1, 9), Interval(20, 25)]))
->>>
->>> print(Path(temp_file.name).read_text(), end="")
-BRCA1	[[1,9],[20,25]]
->>>
->>> with TsvReader.from_path[Target](temp_file.name, header=False, dec_hook=dec_hook) as reader:
-...     print(list(reader))
-[Target(gene='BRCA1', intervals=[Interval(1, 9), Interval(20, 25)])]
+```python
+class Interval:
+    def __init__(self, start: int, end: int) -> None:
+        self.start = start
+        self.end = end
 
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Interval) and (self.start, self.end) == (other.start, other.end)
+
+def enc_hook(obj: object) -> object:
+    if isinstance(obj, Interval):
+        return [obj.start, obj.end]
+    raise NotImplementedError
+
+def dec_hook(kind: type, obj: object) -> object:
+    if kind is Interval:
+        return Interval(*obj)
+    raise NotImplementedError
+
+@dataclass
+class Target:
+    gene: str
+    intervals: list[Interval]
+
+with TsvWriter.from_path[Target](temp_file.name, enc_hook=enc_hook) as writer:
+    writer.write(Target("BRCA1", [Interval(1, 9), Interval(20, 25)]))
+
+assert Path(temp_file.name).read_text() == "BRCA1\t[[1,9],[20,25]]\n"
+
+with TsvReader.from_path[Target](temp_file.name, header=False, dec_hook=dec_hook) as reader:
+    assert list(reader) == [Target("BRCA1", [Interval(1, 9), Interval(20, 25)])]
 ```
 
 ### Your Own Format
 
 Subclass a reader to give a format its own defaults.
 
-```pycon
->>> from typing import TextIO
->>> from typing_extensions import Unpack
->>> from typeline import ReaderOptions, RecordType
->>> from typeline.codecs import key_value
->>>
->>> class VcfLikeReader(TsvReader[RecordType]):
-...     def __init__(self, handle: TextIO, /, **options: Unpack[ReaderOptions]) -> None:
-...         defaults: ReaderOptions = {
-...             "header": False,
-...             "none_field": ".",
-...             "codecs": {dict[str, str]: key_value()},
-...         }
-...         super().__init__(handle, **(defaults | options))
->>>
->>> @dataclass
-... class Site:
-...     chrom: str
-...     pos: int
-...     ident: str | None
-...     info: dict[str, str]
->>>
->>> _ = Path(temp_file.name).write_text("#CHROM\tPOS\tID\tINFO\nchr1\t100\t.\tDP=10;AF=0.5\n")
->>>
->>> with VcfLikeReader.from_path[Site](temp_file.name) as reader:
-...     print(list(reader))
-[Site(chrom='chr1', pos=100, ident=None, info={'DP': '10', 'AF': '0.5'})]
+```python
+from typing import TextIO
 
+from typing_extensions import Unpack
+
+from typeline import ReaderOptions, RecordType
+from typeline.codecs import key_value
+
+class VcfLikeReader(TsvReader[RecordType]):
+    def __init__(self, handle: TextIO, /, **options: Unpack[ReaderOptions]) -> None:
+        defaults: ReaderOptions = {
+            "codecs": {dict[str, str]: key_value()},
+            "header": False,
+            "none_field": ".",
+        }
+        super().__init__(handle, **(defaults | options))
+
+@dataclass
+class Site:
+    chrom: str
+    pos: int
+    ident: str | None
+    info: dict[str, str]
+
+Path(temp_file.name).write_text("#CHROM\tPOS\tID\tINFO\nchr1\t100\t.\tDP=10;AF=0.5\n")
+
+with VcfLikeReader.from_path[Site](temp_file.name) as reader:
+    assert list(reader) == [Site("chr1", 100, None, {"DP": "10", "AF": "0.5"})]
 ```
 
 Type checkers see `VcfLikeReader.from_path[Site](...)` as a `TsvReader[Site]`, its closest built-in reader.
@@ -389,16 +353,14 @@ A subclass can add its own constructors that take a record type the same way by 
 
 A reader fixed to one record type can add `FixedRecordType` to its bases, and is then built without a subscript.
 
-```pycon
->>> from typeline import FixedRecordType
->>>
->>> class SiteReader(VcfLikeReader[Site], FixedRecordType):
-...     pass
->>>
->>> with SiteReader.from_path(temp_file.name) as reader:
-...     print(list(reader))
-[Site(chrom='chr1', pos=100, ident=None, info={'DP': '10', 'AF': '0.5'})]
+```python
+from typeline import FixedRecordType
 
+class SiteReader(VcfLikeReader[Site], FixedRecordType):
+    pass
+
+with SiteReader.from_path(temp_file.name) as reader:
+    assert list(reader) == [Site("chr1", 100, None, {"DP": "10", "AF": "0.5"})]
 ```
 
 More examples, from sample sheets to GFF3 and colored genomic features, are in [`tests/test_real_world_examples.py`](./tests/test_real_world_examples.py).
