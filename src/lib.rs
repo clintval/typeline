@@ -2,6 +2,7 @@
 //!
 //! The Python bindings are built with the `python` feature; the rest is plain Rust.
 
+pub mod rows;
 pub mod text;
 
 #[cfg(feature = "python")]

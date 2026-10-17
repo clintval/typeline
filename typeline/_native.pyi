@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from typing import Any
 
+from typing_extensions import Self
+
 class RecordBuilder:
     """Builds records of one type from rows of text, one field per column."""
 
@@ -42,3 +44,28 @@ class RecordFormatter:
     ) -> None: ...
     def format(self, record: object) -> str | list[str]:
         """Format a record as its line of text, or as its texts when the line needs quoting."""
+
+class RowReader:
+    """Reads records natively from a Python text stream, one row at a time."""
+
+    close_when_read: bool
+
+    def __init__(
+        self,
+        handle: Any,
+        delimiter: str,
+        quoting: bool,
+        comment_prefixes: list[str],
+        on_comment: Callable[[int, str], object] | None,
+    ) -> None: ...
+    def read_row(self) -> tuple[list[str], int] | None:
+        """Read the next row, e.g. a header, as its fields and the line it starts on."""
+    def bind(
+        self,
+        builder: RecordBuilder,
+        invalid: Callable[[list[str], int, Any], Exception],
+        validation_error: type[Exception],
+    ) -> None:
+        """Build records with a builder, explaining an invalid record with `invalid`."""
+    def __iter__(self) -> Self: ...
+    def __next__(self) -> Any: ...

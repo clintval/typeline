@@ -46,6 +46,7 @@ from ._data_types import type_name
 from ._files import on_line
 from ._files import open_for_reading
 from ._native import RecordBuilder
+from ._native import RowReader
 from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
@@ -151,8 +152,6 @@ class DelimitedDataReader(
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
-        self._on_comment: Callable[[Comment], None] | None = on_comment
-        self._close_when_read: bool = False
 
         # Build a JSON decoder for parsing string values into Python objects
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
@@ -177,20 +176,26 @@ class DelimitedDataReader(
             for column in self._counters.columns_of(name, self._column_of)
         ]
 
-        # Read rows as lists, filtering out blank and comment lines between records.
+        # Read rows natively, skipping blank and comment lines between records.
         self._dialect: dict[str, Any] = {
             "delimiter": self.delimiter,
             "quotechar": '"' if quoting else None,
             "quoting": csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         }
-        self._record_end: int = 0
-        self._rows: Any = csv.reader(self._filter_out_comments(handle), **self._dialect)
+        self._rows: RowReader = RowReader(
+            handle,
+            self.delimiter,
+            quoting,
+            list(self._comment_prefixes),
+            None if on_comment is None else lambda line, text: on_comment(Comment(line, text)),
+        )
 
         # Match a header's columns to fields by name, so the columns may come in any order.
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
-        found: list[str] | None = next(self._rows, None) if header else None
-        self._record_end = self._rows.line_num
+        found: list[str] | None = None
+        if header and (first := self._rows.read_row()) is not None:
+            found, self._record_line = first
         columns: set[str] = set(self._columns)
         if found is not None:
             repeated: list[str] = sorted(
@@ -222,6 +227,7 @@ class DelimitedDataReader(
                 index for index, name in enumerate(layout) if name not in columns
             ]
         self._builder: RecordBuilder = self._record_builder(codecs)
+        self._rows.bind(self._builder, self._invalid, ValidationError)
 
     @override
     def __enter__(self) -> Self:
@@ -239,32 +245,6 @@ class DelimitedDataReader(
         """Exit this context while closing all open resources."""
         self.close()
         return None
-
-    def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
-        """Yield lines, skipping blank lines and comments, and sending comments to on_comment.
-
-        A blank line holds only whitespace and no delimiter. Only a line that starts a record is
-        skipped, so a quoted field keeps every line it holds.
-        """
-        prefixes = self._comment_prefixes
-        delimiter = self.delimiter
-        on_comment = self._on_comment
-        line_number = 0
-        yielded = 0
-        for line in lines:
-            line_number += 1
-            if yielded == self._record_end:
-                if line_number == 1:
-                    line = line.removeprefix("\ufeff")
-                if line.isspace() and delimiter not in line:
-                    continue
-                if prefixes and line.startswith(prefixes):
-                    if on_comment is not None:
-                        on_comment(Comment(line_number, line.rstrip("\r\n")))
-                    continue
-                self._record_line = line_number
-            yielded += 1
-            yield line
 
     def _field_reader(
         self, name: str, field_type: Any, codec: FieldCodec[Any] | None
@@ -415,22 +395,7 @@ class DelimitedDataReader(
     @override
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
-        build = self._builder.build
-        try:
-            rows = self._rows
-            for row in rows:
-                self._record_end = rows.line_num
-                try:
-                    record = build(row, self._record_line)
-                except ValidationError as exception:
-                    raise self._invalid(row, self._record_line, exception) from exception
-                yield record
-        except Exception:
-            if self._close_when_read:
-                self.close()
-            raise
-        if self._close_when_read:
-            self.close()
+        return self._rows
 
     def decode(self, line: str) -> RecordType:
         """Decode one record from a line of text, just as this reader reads records from its file.
@@ -486,7 +451,7 @@ class DelimitedDataReader(
         except BaseException:
             handle.close()
             raise
-        reader._close_when_read = True
+        reader._rows.close_when_read = True
         return reader
 
 

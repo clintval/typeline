@@ -1,5 +1,7 @@
+import csv
 from dataclasses import dataclass
 from enum import Enum
+from io import BytesIO
 from io import StringIO
 from pathlib import Path
 from re import escape
@@ -344,3 +346,60 @@ def test_a_row_of_the_wrong_width_names_its_columns_and_line() -> None:
         pytest.raises(ValueError, match=message),
     ):
         _ = list(reader)
+
+
+def test_reader_reads_a_lone_carriage_return_as_a_line_ending() -> None:
+    """Test that a line may end with a lone carriage return, as in old Mac files."""
+    text = "field1,field2,field3\r1,a,0.5\r\n2,b,\n"
+    with CsvReader[SimpleMetric](StringIO(text)) as reader:
+        assert list(reader) == [
+            SimpleMetric(field1=1, field2="a", field3=0.5),
+            SimpleMetric(field1=2, field2="b", field3=None),
+        ]
+
+
+def test_reader_reads_only_a_byte_order_mark_as_no_records() -> None:
+    """Test that text of only a byte order mark holds no records, like empty text."""
+    with CsvReader[SimpleMetric](StringIO("\ufeff"), header=False) as reader:
+        assert list(reader) == []
+
+
+def test_reader_keeps_a_byte_order_mark_that_does_not_start_the_text() -> None:
+    """Test that only a byte order mark that starts the text is dropped."""
+
+    @dataclass
+    class Named:
+        name: str
+
+    with TsvReader[Named](StringIO('\ufeffa\n\ufeff"b"\n'), header=False) as reader:
+        assert list(reader) == [Named("a"), Named('\ufeff"b"')]
+
+
+def test_reader_reads_lines_from_any_iterable_of_text() -> None:
+    """Test that a reader reads from an iterable of lines, not only from a stream."""
+    lines = iter(["field1,field2,field3\n", "1,a,0.5\n", "", "2,b,\n"])
+    reader = CsvReader[SimpleMetric](lines)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+    assert list(reader) == [
+        SimpleMetric(field1=1, field2="a", field3=0.5),
+        SimpleMetric(field1=2, field2="b", field3=None),
+    ]
+
+
+def test_reader_refuses_a_stream_of_bytes() -> None:
+    """Test that a reader names the type of a stream that is not text."""
+    with pytest.raises(TypeError, match=r"^Delimited data must be read as text, not bytes!$"):
+        _ = CsvReader[SimpleMetric](BytesIO(b"field1,field2,field3\n"))  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+
+
+def test_reader_reads_negative_zero_as_a_negative_float() -> None:
+    """Test that the text -0 reads as negative zero in a float field."""
+    with CsvReader[SimpleMetric](StringIO("1,a,-0\n"), header=False) as reader:
+        (record,) = list(reader)
+    assert str(record.field3) == "-0.0"
+
+
+def test_reader_reads_a_field_longer_than_the_csv_module_allows() -> None:
+    """Test that a field is not limited in length, as the csv module limits it."""
+    long = "x" * (csv.field_size_limit() + 1)
+    with CsvReader[SimpleMetric](StringIO(f"1,{long},0.5\n"), header=False) as reader:
+        assert list(reader) == [SimpleMetric(field1=1, field2=long, field3=0.5)]
