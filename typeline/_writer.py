@@ -4,8 +4,8 @@ from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
+from functools import partial
 from io import StringIO
-from math import isfinite
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -35,6 +35,7 @@ from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import type_name
 from ._files import open_for_writing
+from ._native import RecordFormatter
 from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
@@ -166,6 +167,19 @@ class DelimitedDataWriter(
         if header and not quoting:
             self._refuse_unquotable(self._header)
 
+        # Write each record natively as its line, or as its texts when the line needs quoting.
+        self._formatter: RecordFormatter = RecordFormatter(
+            [
+                self._field_output(name, codec, is_counter)
+                for name, codec, is_counter in self._field_codecs
+            ],
+            None if self._extra_field is None else (self._extra_field, self._extra_texts),
+            JSONEncoder(enc_hook=enc_hook).encode,
+            self.delimiter,
+            linesep,
+            list(self._comment_prefixes),
+        )
+
     @override
     def __enter__(self) -> Self:
         """Enter this context."""
@@ -184,33 +198,42 @@ class DelimitedDataWriter(
         return None
 
     def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
-        """Write the value of one field into its text."""
-        if value is None:
-            if codec is not None and codec.missing is not None:
-                return codec.missing
-            return self._none_field
-
+        """Write a value the native engine does not write itself, with its codec or as JSON."""
         if codec is not None:
             try:
                 return codec.into_text(value)
             except Exception as exception:
                 raise self._unwritable(field_name) from exception
-
-        kind = type(value)
-        if kind is str and isinstance(value, str):
-            return value
-        if kind is int:
-            return str(value)
-        if kind is bool:
-            return "true" if value else "false"
-        if kind is float and isinstance(value, float):
-            return self._encoder.encode(value).decode("utf-8") if isfinite(value) else repr(value)
-
         try:
             builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
             return builtin if isinstance(builtin, str) else self._encoder.encode(builtin).decode()
         except (TypeError, ValueError) as exception:
             raise self._unwritable(field_name) from exception
+
+    def _field_output(
+        self, name: str, codec: FieldCodec[Any] | None, is_counter: bool
+    ) -> tuple[str, str, str, Callable[[Any], Any]]:
+        """Decide how the native engine writes a field, and the text it writes for None."""
+        if is_counter:
+            return (name, "many", "", partial(self._counters.write, name))
+        none = (
+            codec.missing if codec is not None and codec.missing is not None else self._none_field
+        )
+        return (
+            name,
+            "value" if codec is None else "call",
+            none,
+            partial(self._format, name, codec=codec),
+        )
+
+    def _extra_texts(self, extra: Any) -> Any:
+        """Return the texts of the ExtraColumns field, which must all be text."""
+        if not all(type(text) is str for text in extra):
+            raise ValueError(
+                f"The ExtraColumns field '{self._extra_field}' of"
+                + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
+            )
+        return extra
 
     def _unwritable(self, field_name: str) -> ValueError:
         """Explain which field could not be written into its text."""
@@ -229,53 +252,18 @@ class DelimitedDataWriter(
             raise ValueError(
                 f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
             )
-        if self._counters:
-            row: list[str] = []
-            for name, codec, is_counter in self._field_codecs:
-                if is_counter:
-                    row.extend(self._counters.write(name, getattr(record, name)))
-                else:
-                    row.append(self._format(name, getattr(record, name), codec))
-        else:
-            row = [
-                self._format(name, getattr(record, name), codec)
-                for name, codec, _ in self._field_codecs
-            ]
-        if self._extra_field is not None:
-            extra = getattr(record, self._extra_field)
-            if not all(type(text) is str for text in extra):
-                raise ValueError(
-                    f"The ExtraColumns field '{self._extra_field}' of"
-                    + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
-                )
-            row.extend(extra)
+        line = self._formatter.format(record)
+        if isinstance(line, str):
+            if self._header_pending:
+                self.write_header()
+            _ = self._handle.write(line)
+            return
+        row = line
         if not self._quoting:
             self._refuse_unquotable(row)
         if self._header_pending:
             self.write_header()
-        if not self._quoting:
-            self._writer.writerow(row)
-        elif row and row[0].startswith(self._comment_prefixes):
-            self._quoting_writer.writerow(row)
-        else:
-            self._write_minimal(row)
-
-    def _write_minimal(self, row: list[str]) -> None:
-        """Write a row with minimal quoting, skipping the csv module when no field needs quoting."""
-        try:
-            line = self.delimiter.join(row)
-        except TypeError:
-            self._writer.writerow(row)
-            return
-        # The csv module writes a row that needs no quoting as its fields joined by the delimiter.
-        if (
-            line
-            and not ('"' in line or "\n" in line or "\r" in line)
-            and line.count(self.delimiter) == len(row) - 1
-        ):
-            _ = self._handle.write(line + linesep)
-        else:
-            self._writer.writerow(row)
+        self._write_row(row)
 
     def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
         """Write a row, quoting it whole when its first field would read as a comment."""
@@ -324,8 +312,11 @@ class DelimitedDataWriter(
         """
         if self._header_pending:
             self.write_header()
-        for record in records:
-            self.write(record)
+        if type(self).write is not DelimitedDataWriter[Any].write:
+            for record in records:
+                self.write(record)
+            return
+        self._formatter.write_all(records, self._record_type, self._handle.write, self.write)
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object.
@@ -392,7 +383,7 @@ class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -401,11 +392,12 @@ class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
         >>>
         >>> from typeline import CsvWriter
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with CsvWriter.from_path[MyData](tmpfile.name) as writer:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.csv"
+        ...     with CsvWriter.from_path[MyData](path) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
-        ...     Path(tmpfile.name).read_text()
+        ...     path.read_text()
         'field1,field2\nmy-name,0.2\n'
 
         ```
@@ -419,7 +411,7 @@ class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -428,11 +420,12 @@ class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
         >>>
         >>> from typeline import TsvWriter
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with TsvWriter.from_path[MyData](tmpfile.name) as writer:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.tsv"
+        ...     with TsvWriter.from_path[MyData](path) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
-        ...     Path(tmpfile.name).read_text()
+        ...     path.read_text()
         'field1\tfield2\nmy-name\t0.2\n'
 
         ```

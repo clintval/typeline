@@ -64,6 +64,11 @@ class DelimitedData:
     def __init_subclass__(cls, delimiter: str | None = None, **kwargs: object) -> None:
         """Define a delimiter upon the subclass, e.g. `class PipeReader(..., delimiter="|")`."""
         if delimiter is not None:
+            if len(delimiter) != 1 or not delimiter.isascii():
+                raise ValueError(
+                    f"The delimiter of {cls.__name__} must be one ASCII character,"
+                    + f" not {delimiter!r}!"
+                )
             cls.delimiter = delimiter
         super().__init_subclass__(**kwargs)
 

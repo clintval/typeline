@@ -5,14 +5,18 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
+from enum import Enum
 from io import StringIO
 from pathlib import Path
 from types import TracebackType
 from typing import Any
 from typing import Callable
 from typing import Generic
+from typing import Literal
 from typing import TextIO
+from typing import TypeAlias
 from typing import cast
+from typing import get_args
 from typing import get_origin
 
 from msgspec import DecodeError
@@ -37,9 +41,12 @@ from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import is_text
+from ._data_types import strip_optional
 from ._data_types import type_name
 from ._files import on_line
 from ._files import open_for_reading
+from ._native import RecordBuilder
+from ._native import RowReader
 from .codecs import NO_CODECS
 from .codecs import Codecs
 from .codecs import FieldCodec
@@ -49,6 +56,20 @@ DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 
 JSON_LITERAL_KEYWORDS: frozenset[str] = frozenset({"null", "true", "false"})
 """JSON literal keywords that require parsing."""
+
+NATIVE_LANES: dict[type, str] = {str: "text", int: "int", float: "float", bool: "bool"}
+"""The types the native engine parses itself, and the lane it parses each in."""
+
+FieldLane: TypeAlias = tuple[
+    str,
+    str | None,
+    bool,
+    dict[str, Any] | None,
+    Callable[[str | bytes], Any] | None,
+    Callable[[str, int | None], Any],
+]
+"""How the native engine reads a field: its lane, none text, whether its text may be JSON, the
+table it is looked up in, its typed decoder, and its reader of text the engine cannot read."""
 
 
 class ReaderOptions(TypedDict, total=False, closed=True):
@@ -131,8 +152,6 @@ class DelimitedDataReader(
         self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
-        self._on_comment: Callable[[Comment], None] | None = on_comment
-        self._close_when_read: bool = False
 
         # Build a JSON decoder for parsing string values into Python objects
         self._json_decoder: JSONDecoder[Any] = JSONDecoder()
@@ -157,20 +176,26 @@ class DelimitedDataReader(
             for column in self._counters.columns_of(name, self._column_of)
         ]
 
-        # Read rows as lists, filtering out blank and comment lines between records.
+        # Read rows natively, skipping blank and comment lines between records.
         self._dialect: dict[str, Any] = {
             "delimiter": self.delimiter,
             "quotechar": '"' if quoting else None,
             "quoting": csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
         }
-        self._record_end: int = 0
-        self._rows: Any = csv.reader(self._filter_out_comments(handle), **self._dialect)
+        self._rows: RowReader = RowReader(
+            handle,
+            self.delimiter,
+            quoting,
+            list(self._comment_prefixes),
+            None if on_comment is None else lambda line, text: on_comment(Comment(line, text)),
+        )
 
         # Match a header's columns to fields by name, so the columns may come in any order.
         self._positions: list[int] | None = None
         self._extra_positions: list[int] = []
-        found: list[str] | None = next(self._rows, None) if header else None
-        self._record_end = self._rows.line_num
+        found: list[str] | None = None
+        if header and (first := self._rows.read_row()) is not None:
+            found, self._record_line = first
         columns: set[str] = set(self._columns)
         if found is not None:
             repeated: list[str] = sorted(
@@ -201,7 +226,8 @@ class DelimitedDataReader(
             self._extra_positions = [
                 index for index, name in enumerate(layout) if name not in columns
             ]
-        self._read_record: Callable[[list[str], int | None], RecordType] = self._record_reader()
+        self._builder: RecordBuilder = self._record_builder(codecs)
+        self._rows.bind(self._builder, self._invalid, ValidationError)
 
     @override
     def __enter__(self) -> Self:
@@ -219,32 +245,6 @@ class DelimitedDataReader(
         """Exit this context while closing all open resources."""
         self.close()
         return None
-
-    def _filter_out_comments(self, lines: Iterator[str]) -> Iterator[str]:
-        """Yield lines, skipping blank lines and comments, and sending comments to on_comment.
-
-        A blank line holds only whitespace and no delimiter. Only a line that starts a record is
-        skipped, so a quoted field keeps every line it holds.
-        """
-        prefixes = self._comment_prefixes
-        delimiter = self.delimiter
-        on_comment = self._on_comment
-        line_number = 0
-        yielded = 0
-        for line in lines:
-            line_number += 1
-            if yielded == self._record_end:
-                if line_number == 1:
-                    line = line.removeprefix("\ufeff")
-                if line.isspace() and delimiter not in line:
-                    continue
-                if prefixes and line.startswith(prefixes):
-                    if on_comment is not None:
-                        on_comment(Comment(line_number, line.rstrip("\r\n")))
-                    continue
-                self._record_line = line_number
-            yielded += 1
-            yield line
 
     def _field_reader(
         self, name: str, field_type: Any, codec: FieldCodec[Any] | None
@@ -299,66 +299,103 @@ class DelimitedDataReader(
             return self._dec_hook(type_, obj)
         raise TypeError(f"Expected {type_name(type_)}, got {type(obj).__name__}")
 
-    def _record_reader(self) -> Callable[[list[str], int | None], RecordType]:
-        """Decide once how a row's columns are built into a record, naming its line in errors."""
-        width = self._width
-        named = len(self._header)
-        positions = self._positions
-        extra_positions = self._extra_positions
-        field_readers = self._field_readers
-        extra_field = self._extra_field
-        counters = self._counters
-        has_counters = bool(counters)
-        record_type = self._record_type
-        convert_hook = self._convert_hook
-        file_name = self._file_name
+    def _field_lane(
+        self,
+        name: str,
+        field_type: Any,
+        codec: FieldCodec[Any] | None,
+        preview: Callable[[str, int | None], Any] | None,
+    ) -> FieldLane:
+        """Decide how the native engine reads a field, and how it reads text it cannot.
 
-        def read_record(row: list[str], line_number: int | None) -> RecordType:
-            if len(row) != width and (extra_field is None or len(row) < width):
-                at_least = "" if extra_field is None else "at least "
-                raise ValueError(
-                    f"Expected {at_least}{width} columns but found {len(row)}"
-                    + f"{on_line(line_number, file_name)} for record type: {record_type.__name__}."
-                )
-            values = row if positions is None else [row[index] for index in positions]
-            preprocessed = {
-                name: text if read is None else read(text, line_number)
-                for (name, read), text in zip(field_readers, values, strict=False)
-            }
-            if extra_field is not None and positions is None:
-                preprocessed[extra_field] = tuple(row[named:])
-            elif extra_field is not None:
-                extra = [row[index] for index in extra_positions]
-                preprocessed[extra_field] = (*extra, *row[width:])
-            if has_counters:
-                preprocessed.update(counters.read(row, line_number, file_name))
+        Text the engine cannot read is previewed as before, then converted by msgspec, except that
+        a codec's value is kept as it is when it is already of the field's class.
+        """
+        convert_hook = self._convert_hook
+        kind = strip_optional(field_type)
+        trusted = (get_origin(kind) or kind) if codec is not None else None
+
+        def read_field(text: str, line_number: int | None) -> Any:
+            value = text if preview is None else preview(text, line_number)
+            if type(value) is trusted:
+                return value
             try:
                 return convert(
-                    preprocessed, record_type, strict=False, str_keys=True, dec_hook=convert_hook
+                    value, field_type, strict=False, str_keys=True, dec_hook=convert_hook
                 )
             except ValidationError as exception:
-                raise ValidationError(
-                    f"Could not build {record_type.__name__} from {preprocessed}"
-                    + f"{on_line(line_number, file_name)}! {exception}"
-                ) from exception
+                raise ValidationError(at_field(str(exception), name)) from exception
 
-        return read_record
+        if codec is not None:
+            return ("call", None, False, None, None, read_field)
+        table = lookup_table(kind)
+        decode = typed_decoder(field_type, convert_hook)
+        lane = next((lane for t, lane in NATIVE_LANES.items() if t is kind), None)
+        lane = lane or ("lookup" if table else "decode" if decode else "call")
+        none_field = self._none_field if accepts_none(field_type) else None
+        return (lane, none_field, not is_text(field_type), table, decode, read_field)
+
+    def _record_builder(self, codecs: Codecs) -> RecordBuilder:
+        """Build the native engine that reads a row's columns into a record."""
+        positions = self._positions
+        fields: list[tuple[str, int, *FieldLane]] = []
+        for index, (name, preview) in enumerate(self._field_readers):
+            field_type = self._field_type_map[name]
+            lane = self._field_lane(name, field_type, find_codec(field_type, codecs), preview)
+            fields.append((name, index if positions is None else positions[index], *lane))
+        extra = (
+            None
+            if self._extra_field is None
+            else (
+                self._extra_field,
+                self._extra_positions,
+                len(self._header) if positions is None else self._width,
+            )
+        )
+        counters, file_name = self._counters, self._file_name
+        return RecordBuilder(
+            self._record_type,
+            fields,
+            self._width,
+            extra,
+            (lambda row, line: counters.read(row, line, file_name)) if counters else None,
+            file_name,
+            DecodeError,
+            ValidationError,
+        )
+
+    def _read_record(self, row: list[str], line_number: int | None) -> RecordType:
+        """Build a record from a row, explaining which field of the row could not be built."""
+        try:
+            return cast(RecordType, self._builder.build(row, line_number))
+        except ValidationError as exception:
+            raise self._invalid(row, line_number, exception) from exception
+
+    def _invalid(
+        self, row: list[str], line_number: int | None, exception: ValidationError
+    ) -> ValidationError:
+        """Explain a record that could not be built, with the values its fields were read as."""
+        values = row if self._positions is None else [row[index] for index in self._positions]
+        preprocessed = {
+            name: text if read is None else read(text, line_number)
+            for (name, read), text in zip(self._field_readers, values, strict=False)
+        }
+        if self._extra_field is not None and self._positions is None:
+            preprocessed[self._extra_field] = tuple(row[len(self._header) :])
+        elif self._extra_field is not None:
+            extra = [row[index] for index in self._extra_positions]
+            preprocessed[self._extra_field] = (*extra, *row[self._width :])
+        if self._counters:
+            preprocessed.update(self._counters.read(row, line_number, self._file_name))
+        return ValidationError(
+            f"Could not build {self._record_type.__name__} from {preprocessed}"
+            + f"{on_line(line_number, self._file_name)}! {exception}"
+        )
 
     @override
     def __iter__(self) -> Iterator[RecordType]:
         """Yield converted records from the delimited data file."""
-        read_record = self._read_record
-        try:
-            rows = self._rows
-            for row in rows:
-                self._record_end = rows.line_num
-                yield read_record(row, self._record_line)
-        except Exception:
-            if self._close_when_read:
-                self.close()
-            raise
-        if self._close_when_read:
-            self.close()
+        return self._rows
 
     def decode(self, line: str) -> RecordType:
         """Decode one record from a line of text, just as this reader reads records from its file.
@@ -414,7 +451,7 @@ class DelimitedDataReader(
         except BaseException:
             handle.close()
             raise
-        reader._close_when_read = True
+        reader._rows.close_when_read = True
         return reader
 
 
@@ -425,7 +462,7 @@ class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -434,10 +471,10 @@ class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
         >>>
         >>> from typeline import CsvReader
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
-        ...     _ = tmpfile.flush()
-        ...     with CsvReader.from_path[MyData](tmpfile.name) as reader:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.csv"
+        ...     _ = path.write_text("field1,field2\nmy-name,0.2\n")
+        ...     with CsvReader.from_path[MyData](path) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
@@ -453,7 +490,7 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -462,13 +499,40 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
         >>>
         >>> from typeline import TsvReader
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
-        ...     _ = tmpfile.flush()
-        ...     with TsvReader.from_path[MyData](tmpfile.name) as reader:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.tsv"
+        ...     _ = path.write_text("field1\tfield2\nmy-name\t0.2\n")
+        ...     with TsvReader.from_path[MyData](path) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
 
         ```
     """
+
+
+def lookup_table(kind: Any) -> dict[str, Any] | None:
+    """Return the values of an enum or `Literal` by their text, when all their values are text."""
+    if isinstance(kind, type) and issubclass(kind, Enum):
+        table: dict[Any, Any] = {member.value: member for member in kind}
+    elif get_origin(kind) is Literal:
+        table = {value: value for value in get_args(kind)}
+    else:
+        return None
+    return table if all(isinstance(value, str) for value in table) else None
+
+
+def typed_decoder(
+    field_type: Any, dec_hook: Callable[[type, Any], Any]
+) -> Callable[[str | bytes], Any] | None:
+    """Return the decode method of a JSON decoder as lax as `convert`, if msgspec can build one."""
+    try:
+        return JSONDecoder(field_type, strict=False, dec_hook=dec_hook).decode
+    except TypeError:
+        return None
+
+
+def at_field(message: str, name: str) -> str:
+    """Name a field in the path of a msgspec error about the field's value, e.g. `$.name[0]`."""
+    head, found, path = message.rpartition(" - at `$")
+    return f"{head} - at `$.{name}{path}" if found else f"{message} - at `$.{name}`"
