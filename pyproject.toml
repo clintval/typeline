@@ -48,17 +48,32 @@ dev = [
 ]
 
 [build-system]
-requires      = ["hatchling"]
-build-backend = "hatchling.build"
+requires      = ["maturin>=1.15,<2"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.sdist]
-only-include = ["typeline", "tests", "conftest.py", "README.md", "CONTRIBUTING.md", "LICENSE"]
+[tool.maturin]
+module-name = "typeline._native"
+include     = [
+    { path = "CONTRIBUTING.md", format = "sdist" },
+    { path = "LICENSE", format = "sdist" },
+    { path = "conftest.py", format = "sdist" },
+    { path = "tests/*.py", format = "sdist" },
+]
+exclude     = [
+    { path = ".github/**/*", format = "sdist" },
+]
 
 [tool.uv]
 # Ignore releases younger than a week, so a compromised publish has time to be
 # caught before it can be locked. Must stay >= the Dependabot `cooldown` in
 # .github/dependabot.yml, or Dependabot will propose versions that can't lock.
 exclude-newer = "1 week"
+cache-keys    = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+]
 
 [tool.poe.tasks]
 fix-format = "ruff format"

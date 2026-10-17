@@ -1,0 +1,34 @@
+[package]
+name = "typeline"
+version = "2.4.2"
+edition = "2024"
+rust-version = "1.89"
+authors = ["Clint Valentine <valentine.clint@gmail.com>"]
+license = "MIT"
+description = "The native engine of typeline, which reads and writes dataclasses as delimited text"
+repository = "https://github.com/clintval/typeline"
+publish = false
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py311"] }
+ryu = "1"
+
+[lints.rust]
+missing_docs = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
