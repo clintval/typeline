@@ -127,6 +127,38 @@ class Coverage:
     gc: float
 
 
+def test_write_all_keeps_a_record_that_needs_quoting_in_place() -> None:
+    """Test that a record whose text must be quoted is written in its place among the others."""
+    stream = StringIO()
+    records = [Coverage("a", 1.0), Coverage("b\tc", 2.0), Coverage("d", 3.0)]
+    TsvWriter[Coverage](stream).write_all(records)
+
+    assert stream.getvalue() == 'a\t1.0\n"b\tc"\t2.0\nd\t3.0\n'.replace("\n", linesep)
+
+
+def test_write_all_writes_many_records_in_order() -> None:
+    """Test that write_all writes more records than it holds at once, all in order."""
+    stream = StringIO()
+    TsvWriter[Point](stream).write_all([Point(x, -x) for x in range(20_000)])
+
+    assert stream.getvalue() == "".join(f"{x}\t{-x}{linesep}" for x in range(20_000))
+
+
+def test_write_all_keeps_what_is_written_between_records_of_a_generator_in_place() -> None:
+    """Test that whatever is written while a generator yields records stays between them."""
+    stream = StringIO()
+    writer = TsvWriter[Point](stream)
+
+    def points() -> Iterator[Point]:
+        yield Point(0, 0)
+        writer.write_comment("between")
+        yield Point(1, 1)
+
+    writer.write_all(points())
+
+    assert stream.getvalue() == f"0\t0{linesep}# between{linesep}1\t1{linesep}"
+
+
 def test_write_all_with_renamed_columns(tmp_path: Path) -> None:
     """Test that write_all with a header writes the renamed columns, which read back."""
     path = tmp_path / "coverage.tsv"

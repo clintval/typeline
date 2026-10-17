@@ -18,6 +18,8 @@ python = ["dep:pyo3"]
 
 [dependencies]
 csv-core = "0.1.13"
+itoa = "1.0.18"
+jiter = { version = "0.17.0", default-features = false }
 memchr = "2.8.3"
 pyo3 = { version = "0.29", features = ["abi3-py311"], optional = true }
 ryu = "1"

@@ -174,6 +174,7 @@ class DelimitedDataWriter(
                 for name, codec, is_counter in self._field_codecs
             ],
             None if self._extra_field is None else (self._extra_field, self._extra_texts),
+            JSONEncoder(enc_hook=enc_hook).encode,
             self.delimiter,
             linesep,
             list(self._comment_prefixes),
@@ -311,8 +312,7 @@ class DelimitedDataWriter(
         """
         if self._header_pending:
             self.write_header()
-        for record in records:
-            self.write(record)
+        self._formatter.write_all(records, self._record_type, self._handle.write, self.write)
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object.
