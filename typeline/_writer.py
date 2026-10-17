@@ -379,7 +379,7 @@ class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -388,11 +388,12 @@ class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
         >>>
         >>> from typeline import CsvWriter
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with CsvWriter.from_path[MyData](tmpfile.name) as writer:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.csv"
+        ...     with CsvWriter.from_path[MyData](path) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
-        ...     Path(tmpfile.name).read_text()
+        ...     path.read_text()
         'field1,field2\nmy-name,0.2\n'
 
         ```
@@ -406,7 +407,7 @@ class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -415,11 +416,12 @@ class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
         >>>
         >>> from typeline import TsvWriter
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with TsvWriter.from_path[MyData](tmpfile.name) as writer:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.tsv"
+        ...     with TsvWriter.from_path[MyData](path) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
-        ...     Path(tmpfile.name).read_text()
+        ...     path.read_text()
         'field1\tfield2\nmy-name\t0.2\n'
 
         ```

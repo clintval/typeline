@@ -155,7 +155,9 @@ def test_round_trip_without_a_header() -> None:
 def test_reader_refuses_a_count_that_is_not_an_integer(tmp_path: Path, text: str) -> None:
     """Test that a member column must hold an integer count."""
     path = tmp_path / "pileup.tsv"
-    _ = path.write_text(f"name\tA\tC\tG\tT\nsite1\t1\t2\t3\t4\nsite2\t3\t{text}\t0\t0\n")
+    _ = path.write_text(
+        f"name\tA\tC\tG\tT\nsite1\t1\t2\t3\t4\nsite2\t3\t{text}\t0\t0\n", encoding="utf-8"
+    )
 
     message = (
         r"^Could not read column 'C' of field 'counts' as a count"

@@ -497,7 +497,7 @@ class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -506,10 +506,10 @@ class CsvReader(DelimitedDataReader[RecordType], delimiter=","):
         >>>
         >>> from typeline import CsvReader
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     _ = tmpfile.write("field1,field2\nmy-name,0.2\n")
-        ...     _ = tmpfile.flush()
-        ...     with CsvReader.from_path[MyData](tmpfile.name) as reader:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.csv"
+        ...     _ = path.write_text("field1,field2\nmy-name,0.2\n")
+        ...     with CsvReader.from_path[MyData](path) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
@@ -525,7 +525,7 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -534,10 +534,10 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
         >>>
         >>> from typeline import TsvReader
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     _ = tmpfile.write("field1\tfield2\nmy-name\t0.2\n")
-        ...     _ = tmpfile.flush()
-        ...     with TsvReader.from_path[MyData](tmpfile.name) as reader:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.tsv"
+        ...     _ = path.write_text("field1\tfield2\nmy-name\t0.2\n")
+        ...     with TsvReader.from_path[MyData](path) as reader:
         ...         for record in reader:
         ...             print(record)
         MyData(field1='my-name', field2=0.2)
