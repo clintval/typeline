@@ -312,6 +312,10 @@ class DelimitedDataWriter(
         """
         if self._header_pending:
             self.write_header()
+        if type(self).write is not DelimitedDataWriter[Any].write:
+            for record in records:
+                self.write(record)
+            return
         self._formatter.write_all(records, self._record_type, self._handle.write, self.write)
 
     def write_header(self) -> None:

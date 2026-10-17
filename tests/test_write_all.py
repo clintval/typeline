@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from typing_extensions import override
 
 from typeline import Codecs
 from typeline import CounterColumns
@@ -229,3 +230,20 @@ def test_write_all_with_counter_columns(tmp_path: Path) -> None:
     )
     with TsvReader.from_path[Pileup](path) as reader:
         assert [record.counts.total() for record in reader] == [15, 0]
+
+
+def test_write_all_writes_each_record_with_the_write_of_a_subclass() -> None:
+    """Test that write_all hands each record to a subclass that overrides write."""
+    seen: list[Point] = []
+
+    class SeeingWriter(TsvWriter[Point]):
+        @override
+        def write(self, record: Point) -> None:
+            seen.append(record)
+            super().write(record)
+
+    stream = StringIO()
+    SeeingWriter(stream).write_all([Point(0, 0), Point(1, 1)])
+
+    assert seen == [Point(0, 0), Point(1, 1)]
+    assert stream.getvalue() == f"0\t0{linesep}1\t1{linesep}"
