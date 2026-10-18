@@ -1,6 +1,6 @@
 //! Writing records natively as lines of delimited text.
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 
@@ -9,10 +9,10 @@ use crate::text::json_float;
 
 /// How a field of a record is written into text.
 enum Out {
-    /// Write the value natively, or as JSON, and with the field's writer when neither can.
+    /// Write the value natively, or as the text of its JSON.
     Value,
-    /// Always write the value with the field's writer, e.g. through a codec.
-    Call,
+    /// Write the value with the field's codec.
+    Codec,
     /// Write the texts of several columns, which the field's writer returns.
     Many,
 }
@@ -22,7 +22,20 @@ struct OutField {
     name: Py<PyString>,
     out: Out,
     none: Py<PyString>,
-    write: Py<PyAny>,
+    write: Option<Py<PyAny>>,
+    unwritable: String,
+}
+
+impl OutField {
+    /// Explains that the value of this field could not be written, and why.
+    fn unwritable(&self, py: Python<'_>, cause: PyErr) -> PyErr {
+        if !cause.is_instance_of::<PyException>(py) {
+            return cause;
+        }
+        let error = PyValueError::new_err(self.unwritable.clone());
+        error.set_cause(py, Some(cause));
+        error
+    }
 }
 
 /// The text of a field, written natively or by Python.
@@ -81,7 +94,8 @@ impl RecordFormatter {
             Bound<'_, PyString>,
             String,
             Bound<'_, PyString>,
-            Bound<'_, PyAny>,
+            Option<Bound<'_, PyAny>>,
+            String,
         )>,
         extra: Option<(Bound<'_, PyString>, Bound<'_, PyAny>)>,
         encode: Bound<'_, PyAny>,
@@ -91,18 +105,24 @@ impl RecordFormatter {
     ) -> PyResult<Self> {
         let fields = fields
             .into_iter()
-            .map(|(name, out, none, write)| {
+            .map(|(name, out, none, write, unwritable)| {
                 let out = match out.as_str() {
                     "value" => Out::Value,
-                    "call" => Out::Call,
+                    "codec" => Out::Codec,
                     "many" => Out::Many,
                     _ => return Err(PyValueError::new_err(format!("Unknown output '{out}'!"))),
                 };
+                if write.is_none() && !matches!(out, Out::Value) {
+                    return Err(PyValueError::new_err(format!(
+                        "Output '{name}' needs a writer!"
+                    )));
+                }
                 Ok(OutField {
                     name: name.unbind(),
                     out,
                     none: none.unbind(),
-                    write: write.unbind(),
+                    write: write.map(Bound::unbind),
+                    unwritable,
                 })
             })
             .collect::<PyResult<Vec<_>>>()?;
@@ -207,20 +227,26 @@ impl RecordFormatter {
         let mut pieces: Vec<Piece<'py>> = Vec::with_capacity(self.fields.len());
         for field in &self.fields {
             let value = record.getattr(field.name.bind(py))?;
-            match field.out {
-                Out::Many => {
-                    for text in field.write.bind(py).call1((value,))?.try_iter()? {
+            if value.is_none() && !matches!(field.out, Out::Many) {
+                pieces.push(Piece::Object(field.none.bind(py).clone().into_any()));
+                continue;
+            }
+            match (&field.out, &field.write) {
+                (Out::Many, Some(write)) => {
+                    for text in write.bind(py).call1((value,))?.try_iter()? {
                         pieces.push(Piece::Object(text?));
                     }
                 }
-                _ if value.is_none() => {
-                    pieces.push(Piece::Object(field.none.bind(py).clone().into_any()));
-                }
-                Out::Call => pieces.push(Piece::Object(field.write.bind(py).call1((value,))?)),
-                Out::Value => pieces.push(match self.native(py, &value)? {
-                    Some(piece) => piece,
-                    None => Piece::Object(field.write.bind(py).call1((value,))?),
-                }),
+                (Out::Codec, Some(write)) => pieces.push(Piece::Object(
+                    write
+                        .bind(py)
+                        .call1((value,))
+                        .map_err(|error| field.unwritable(py, error))?,
+                )),
+                _ => pieces.push(
+                    self.native(py, &value)
+                        .map_err(|error| field.unwritable(py, error))?,
+                ),
             }
         }
         if let Some((name, check)) = &self.extra {
@@ -234,41 +260,35 @@ impl RecordFormatter {
 
     /// Writes a value natively, as typeline does: exact strings as they are, integers, floats,
     /// and booleans as JSON, and any other value as its JSON text, or the string it encodes to.
-    /// Returns None when the value cannot be encoded, for the field's writer to explain.
-    fn native<'py>(
-        &self,
-        py: Python<'py>,
-        value: &Bound<'py, PyAny>,
-    ) -> PyResult<Option<Piece<'py>>> {
+    fn native<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Piece<'py>> {
         if value.is_exact_instance_of::<PyString>() {
-            return Ok(Some(Piece::Object(value.clone())));
+            return Ok(Piece::Object(value.clone()));
         }
         if value.is_exact_instance_of::<PyBool>() {
-            return Ok(Some(Piece::Static(if value.is_truthy()? {
+            return Ok(Piece::Static(if value.is_truthy()? {
                 "true"
             } else {
                 "false"
-            })));
+            }));
         }
         if value.is_exact_instance_of::<PyInt>() {
-            return Ok(Some(match value.extract::<i64>() {
+            return Ok(match value.extract::<i64>() {
                 Ok(number) => Piece::Owned(itoa::Buffer::new().format(number).to_string()),
                 Err(_) => Piece::Object(value.str()?.into_any()),
-            }));
+            });
         }
         if value.is_exact_instance_of::<PyFloat>() {
             let number = value.extract::<f64>()?;
-            return Ok(Some(if number.is_finite() {
+            return Ok(if number.is_finite() {
                 Piece::Owned(json_float(number))
             } else {
                 Piece::Object(value.repr()?.into_any())
-            }));
+            });
         }
-        let Ok(json) = self.encode.bind(py).call1((value,)) else {
-            return Ok(None);
-        };
-        let json = json.cast::<PyBytes>()?.as_bytes();
-        Ok(json_text(json).map(Piece::Owned))
+        let json = self.encode.bind(py).call1((value,))?;
+        json_text(json.cast::<PyBytes>()?.as_bytes())
+            .map(Piece::Owned)
+            .ok_or_else(|| PyValueError::new_err("The JSON of the value is not valid UTF-8!"))
     }
 
     /// Joins texts into a line when the csv module would write them as they are, else None.

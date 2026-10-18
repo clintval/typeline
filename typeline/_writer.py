@@ -15,7 +15,6 @@ from typing import Generic
 from typing import TextIO
 from typing import cast
 
-from msgspec import to_builtins
 from msgspec.json import Encoder as JSONEncoder
 from typing_extensions import Self
 from typing_extensions import TypedDict
@@ -150,9 +149,6 @@ class DelimitedDataWriter(
             if name != self._extra_field
         ]
 
-        # Build a JSON encoder for writing values that are not strings once converted to builtins.
-        self._encoder: JSONEncoder = JSONEncoder()
-
         # Build the delimited writer which will use platform-dependent newlines.
         self._writer: Any = csv.writer(
             handle,
@@ -197,34 +193,21 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
-        """Write a value the native engine does not write itself, with its codec or as JSON."""
-        if codec is not None:
-            try:
-                return codec.into_text(value)
-            except Exception as exception:
-                raise self._unwritable(field_name) from exception
-        try:
-            builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
-            return builtin if isinstance(builtin, str) else self._encoder.encode(builtin).decode()
-        except (TypeError, ValueError) as exception:
-            raise self._unwritable(field_name) from exception
-
     def _field_output(
         self, name: str, codec: FieldCodec[Any] | None, is_counter: bool
-    ) -> tuple[str, str, str, Callable[[Any], Any]]:
-        """Decide how the native engine writes a field, and the text it writes for None."""
+    ) -> tuple[str, str, str, Callable[[Any], Any] | None, str]:
+        """Decide how the native engine writes a field, its text for None, and its errors."""
         if is_counter:
-            return (name, "many", "", partial(self._counters.write, name))
+            return (name, "many", "", partial(self._counters.write, name), "")
         none = (
             codec.missing if codec is not None and codec.missing is not None else self._none_field
         )
-        return (
-            name,
-            "value" if codec is None else "call",
-            none,
-            partial(self._format, name, codec=codec),
-        )
+        field_type = type_name(self._field_type_map[name])
+        where = in_column(name, self._column_of[name])
+        unwritable = f"Could not write field '{name}' of type {field_type}{where}!"
+        if codec is None:
+            return (name, "value", none, None, unwritable)
+        return (name, "codec", none, codec.into_text, unwritable)
 
     def _extra_texts(self, extra: Any) -> Any:
         """Return the texts of the ExtraColumns field, which must all be text."""
@@ -234,12 +217,6 @@ class DelimitedDataWriter(
                 + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
             )
         return extra
-
-    def _unwritable(self, field_name: str) -> ValueError:
-        """Explain which field could not be written into its text."""
-        field_type = type_name(self._field_type_map[field_name])
-        where = in_column(field_name, self._column_of[field_name])
-        return ValueError(f"Could not write field '{field_name}' of type {field_type}{where}!")
 
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.
