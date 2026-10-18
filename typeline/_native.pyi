@@ -27,7 +27,7 @@ class RecordFormatter:
     def __init__(
         self,
         record_type: type[Any],
-        fields: list[tuple[str, str, str, Callable[[Any], Any] | None, str]],
+        fields: list[tuple[str, str, str, Any, str]],
         extra: str | None,
         encode: Callable[[Any], bytes],
         delimiter: str,

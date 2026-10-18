@@ -3,7 +3,6 @@ from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
-from functools import partial
 from io import StringIO
 from os import linesep
 from pathlib import Path
@@ -134,12 +133,12 @@ class DelimitedDataWriter(
             for column in counters.columns_of(name, column_of)
         ]
         self._header: tuple[str, ...] = tuple(column for _, column in layout)
-        fields: list[tuple[str, str, str, Callable[[Any], Any] | None, str]] = []
+        fields: list[tuple[str, str, str, Any, str]] = []
         for name, field_type in field_type_map.items():
             if name == extra_field:
                 continue
             if name in counters:
-                fields.append((name, "many", "", partial(counters.write, name), ""))
+                fields.append((name, "counts", "", counters.written(name), ""))
                 continue
             codec = find_codec(field_type, codecs)
             none = codec.missing if codec is not None and codec.missing is not None else none_field

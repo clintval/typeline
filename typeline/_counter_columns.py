@@ -68,10 +68,6 @@ class CounterFields:
                 self._enums[name] = self._enum_of(record_type, name, field_type)
                 for member in self._enums[name]:
                     self._claim(record_type, name, member, field_type_map)
-        self._by_key: dict[str, dict[object, Enum]] = {
-            name: {key: member for member in enum for key in (member, member.value)}
-            for name, enum in self._enums.items()
-        }
 
     def __contains__(self, name: object) -> bool:
         """Return whether a field is a `CounterColumns` field."""
@@ -128,30 +124,14 @@ class CounterFields:
             for name, enum in self._enums.items()
         ]
 
-    def write(self, name: str, counts: Mapping[Any, object]) -> list[str]:
-        """Write the count of each member of a field in enum order, 0 when absent."""
+    def written(self, name: str) -> tuple[dict[object, int], list[str], str]:
+        """Return how a field's counts are written.
+
+        That is the index of each member, by the member and by its value, the column of each
+        member in enum order, and the name of the enum.
+        """
         enum = self._enums[name]
-        by_key = self._by_key[name]
-        by_member: dict[Enum, object] = {}
-        for key, count in counts.items():
-            member = by_key.get(key)
-            if member is None:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts '{key}'"
-                    + f" that is not a member of {enum.__name__}!"
-                )
-            if member in by_member:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts '{member.value}' twice!"
-                )
-            by_member[member] = count
-        texts: list[str] = []
-        for member in enum:
-            count = by_member.get(member, 0)
-            if type(count) is not int or count < 0:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts {count!r} of '{member.value}'"
-                    + "; counts must be non-negative integers!"
-                )
-            texts.append(str(count))
-        return texts
+        index_of: dict[object, int] = {
+            key: index for index, member in enumerate(enum) for key in (member, member.value)
+        }
+        return index_of, [member.value for member in enum], enum.__name__

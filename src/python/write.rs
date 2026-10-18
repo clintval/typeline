@@ -2,7 +2,7 @@
 
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 
 use crate::rows::CHUNK;
 use crate::text::json_float;
@@ -12,9 +12,67 @@ enum Out {
     /// Write the value natively, or as the text of its JSON.
     Value,
     /// Write the value with the field's codec.
-    Codec,
-    /// Write the texts of several columns, which the field's writer returns.
-    Many,
+    Codec(Py<PyAny>),
+    /// Write the count of each member of an enum in its own column.
+    Counts(Counted),
+}
+
+/// The members of an enum a field counts, one column per member in enum order.
+struct Counted {
+    index_of: Py<PyDict>,
+    columns: Vec<String>,
+    enum_name: String,
+}
+
+impl Counted {
+    /// Returns the count of each member in enum order, 0 when absent.
+    ///
+    /// A count is keyed by a member or its value, and a key that is neither, a member counted
+    /// twice, and a count that is not a non-negative integer are refused.
+    fn counts<'py>(
+        &self,
+        py: Python<'py>,
+        name: &Bound<'py, PyString>,
+        counts: &Bound<'py, PyAny>,
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        let index_of = self.index_of.bind(py);
+        let mut found: Vec<Option<Bound<'py, PyAny>>> = vec![None; self.columns.len()];
+        for item in counts.call_method0("items")?.try_iter()? {
+            let (key, count): (Bound<'py, PyAny>, Bound<'py, PyAny>) = item?.extract()?;
+            let Some(index) = index_of.get_item(&key)? else {
+                return Err(PyValueError::new_err(format!(
+                    "Could not write field '{name}', which counts '{}' that is not a member of {}!",
+                    key.str()?,
+                    self.enum_name
+                )));
+            };
+            let index: usize = index.extract()?;
+            if found[index].is_some() {
+                return Err(PyValueError::new_err(format!(
+                    "Could not write field '{name}', which counts '{}' twice!",
+                    self.columns[index]
+                )));
+            }
+            found[index] = Some(count);
+        }
+        let zero = 0_i64.into_pyobject(py)?.into_any();
+        found
+            .into_iter()
+            .enumerate()
+            .map(|(index, count)| {
+                let count = count.unwrap_or_else(|| zero.clone());
+                if !count.is_exact_instance_of::<PyInt>() || count.lt(0)? {
+                    return Err(PyValueError::new_err(format!(
+                        "Could not write field '{name}', which counts {} of '{}'; counts must \
+                         be non-negative integers!",
+                        count.repr()?,
+                        self.columns[index]
+                    )));
+                }
+                Ok(count)
+            })
+            .collect()
+    }
 }
 
 /// A field of a record and how it is written.
@@ -22,7 +80,6 @@ struct OutField {
     name: Py<PyString>,
     out: Out,
     none: Py<PyString>,
-    write: Option<Py<PyAny>>,
     unwritable: String,
 }
 
@@ -99,23 +156,30 @@ impl RecordFormatter {
     ) -> PyResult<Self> {
         let fields = fields
             .into_iter()
-            .map(|(name, out, none, write, unwritable)| {
+            .map(|(name, out, none, details, unwritable)| {
+                let needed = || {
+                    details.as_ref().ok_or_else(|| {
+                        PyValueError::new_err(format!("The output '{out}' needs its details!"))
+                    })
+                };
                 let out = match out.as_str() {
                     "value" => Out::Value,
-                    "codec" => Out::Codec,
-                    "many" => Out::Many,
+                    "codec" => Out::Codec(needed()?.clone().unbind()),
+                    "counts" => {
+                        let (index_of, columns, enum_name): (Bound<'_, PyDict>, Vec<String>, _) =
+                            needed()?.extract()?;
+                        Out::Counts(Counted {
+                            index_of: index_of.unbind(),
+                            columns,
+                            enum_name,
+                        })
+                    }
                     _ => return Err(PyValueError::new_err(format!("Unknown output '{out}'!"))),
                 };
-                if write.is_none() && !matches!(out, Out::Value) {
-                    return Err(PyValueError::new_err(format!(
-                        "Output '{name}' needs a writer!"
-                    )));
-                }
                 Ok(OutField {
                     name: name.unbind(),
                     out,
                     none: none.unbind(),
-                    write: write.map(Bound::unbind),
                     unwritable,
                 })
             })
@@ -213,25 +277,23 @@ impl RecordFormatter {
     ) -> PyResult<Vec<Piece<'py>>> {
         let mut pieces: Vec<Piece<'py>> = Vec::with_capacity(self.fields.len());
         for field in &self.fields {
-            let value = record.getattr(field.name.bind(py))?;
-            if value.is_none() && !matches!(field.out, Out::Many) {
-                pieces.push(Piece::Object(field.none.bind(py).clone()));
-                continue;
-            }
-            match (&field.out, &field.write) {
-                (Out::Many, Some(write)) => {
-                    for text in write.bind(py).call1((value,))?.try_iter()? {
-                        pieces.push(Piece::Object(as_text(text?)?));
+            let name = field.name.bind(py);
+            let value = record.getattr(name)?;
+            match &field.out {
+                Out::Counts(counted) => {
+                    for count in counted.counts(py, name, &value)? {
+                        pieces.push(self.native(py, &count)?);
                     }
                 }
-                (Out::Codec, Some(write)) => {
+                _ if value.is_none() => pieces.push(Piece::Object(field.none.bind(py).clone())),
+                Out::Codec(write) => {
                     let text = write
                         .bind(py)
                         .call1((value,))
                         .map_err(|error| field.unwritable(py, error))?;
                     pieces.push(Piece::Object(as_text(text)?));
                 }
-                _ => pieces.push(
+                Out::Value => pieces.push(
                     self.native(py, &value)
                         .map_err(|error| field.unwritable(py, error))?,
                 ),
