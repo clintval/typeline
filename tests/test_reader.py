@@ -203,6 +203,23 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
         _ = list(reader)
 
 
+def test_reader_reads_text_that_only_looks_like_json_as_text() -> None:
+    """Test that a field that may hold text keeps malformed JSON as text, but refuses other JSON."""
+
+    @dataclass
+    class Note:
+        body: str | list[int]
+
+    reader = TsvReader[Note](StringIO(), header=False)
+
+    assert reader.decode("[1,2]\n") == Note([1, 2])
+    assert reader.decode("[not json\n") == Note("[not json")
+    with pytest.raises(
+        ValueError, match=r"from text '\{\}'! Expected `str \| array`, got `object`$"
+    ):
+        _ = reader.decode("{}\n")
+
+
 def test_reader_can_read_old_style_optional_types(tmp_path: Path) -> None:
     """Test that the reader can read old style optional types."""
 

@@ -210,6 +210,9 @@ impl Field {
 
 /// Decodes text with a typed decoder: as JSON when it looks like JSON, and else, or when it is
 /// not valid JSON after all, as a JSON string.
+///
+/// msgspec raises `DecodeError` itself for malformed JSON, and its subclass `ValidationError`
+/// for JSON of the wrong shape, which is raised as it is.
 fn decode_json<'py>(
     py: Python<'py>,
     text: &str,
@@ -219,9 +222,7 @@ fn decode_json<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     if json_like && looks_like_json(text) {
         match decode.call1((PyBytes::new(py, text.as_bytes()),)) {
-            Err(error)
-                if error.is_instance(py, decode_error)
-                    && jiter::JsonValue::parse(text.as_bytes(), false).is_err() => {}
+            Err(error) if error.get_type(py).is(decode_error) => {}
             decoded => return decoded,
         }
     }
