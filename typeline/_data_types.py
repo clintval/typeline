@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from typing import Annotated
 from typing import Any
 from typing import ClassVar
+from typing import Literal
 from typing import Protocol
 from typing import TypeAlias
 from typing import TypeVar
@@ -47,6 +48,16 @@ def strip_optional(annotation: Any) -> Any:
 def value_type(annotation: Any) -> Any:
     """Return the type of the value an annotation holds, without `Annotated` or `| None`."""
     return strip_annotated(strip_optional(strip_annotated(annotation)))
+
+
+def is_text(annotation: Any) -> bool:
+    """Return whether an annotation holds text, like `str`, a str enum, or a `Literal` of text."""
+    annotation = value_type(annotation)
+    while hasattr(annotation, "__supertype__"):
+        annotation = annotation.__supertype__
+    if get_origin(annotation) is Literal:
+        return all(isinstance(arg, str) for arg in get_args(annotation))
+    return isinstance(annotation, type) and issubclass(annotation, str)
 
 
 def type_name(annotation: Any) -> str:

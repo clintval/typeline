@@ -15,6 +15,7 @@ from io import BytesIO
 from io import StringIO
 from pathlib import Path
 from re import escape
+from typing import Annotated
 from typing import Any
 from typing import Literal
 from typing import NewType
@@ -23,6 +24,7 @@ from typing import cast
 from uuid import UUID
 
 import pytest
+from msgspec import Meta
 
 from typeline import CsvReader
 from typeline import CsvWriter
@@ -350,6 +352,33 @@ def test_reader_keeps_text_in_text_like_fields(tmp_path: Path) -> None:
             TextLike(SampleId("true"), "false", Kind.Null),
             TextLike(SampleId("null"), "true", Kind.Listed),
         ]
+
+
+@dataclass
+class AnnotatedText:
+    """A record whose text fields are annotated, without a codec for the annotation."""
+
+    note: Annotated[str, "note"]
+    flag: Annotated[Literal["true", "false"], "flag"]
+    count: Annotated[int, Meta(ge=0)]
+
+
+def test_reader_keeps_text_in_annotated_text_fields() -> None:
+    """Test that annotated text fields keep text that looks like JSON, as plain ones do."""
+    reader = CsvReader[AnnotatedText](StringIO(), header=False)
+
+    assert reader.decode("true,false,1\n") == AnnotatedText("true", "false", 1)
+    assert reader.decode("[x],true,2\n") == AnnotatedText("[x]", "true", 2)
+    assert reader.decode("null,false,0\n") == AnnotatedText("null", "false", 0)
+
+
+def test_reader_checks_the_constraints_of_an_annotated_number() -> None:
+    """Test that an annotated number is still checked against its msgspec constraints."""
+    reader = CsvReader[AnnotatedText](StringIO(), header=False)
+
+    message = r"^Could not read field 'count' of type .* from text '-1'! Expected `int` >= 0$"
+    with pytest.raises(ValueError, match=message):
+        _ = reader.decode("a,true,-1\n")
 
 
 def test_errors_name_the_line_a_record_starts_on() -> None:

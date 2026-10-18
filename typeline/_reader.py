@@ -46,6 +46,7 @@ from ._data_types import accepts_none
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
+from ._data_types import is_text
 from ._data_types import strip_optional
 from ._data_types import type_name
 from ._files import on_line
@@ -271,8 +272,7 @@ class DelimitedDataReader(
             decode = JSONDecoder(field_type, strict=False, dec_hook=self._dec_hook).decode
         except TypeError as exception:
             raise TypeError(f"Cannot read {label}, which msgspec cannot decode!") from exception
-        json_like = not (isinstance(kind, type) and issubclass(kind, str))
-        return (name, column, "decode", none, (decode, json_like), label, place)
+        return (name, column, "decode", none, (decode, not is_text(field_type)), label, place)
 
     @override
     def __iter__(self) -> Iterator[RecordType]:
