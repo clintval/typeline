@@ -485,24 +485,11 @@ impl RecordBuilder {
                 .unbind(),
         })
     }
-
-    /// Build a record from a row, naming the line it starts on in errors.
-    #[pyo3(signature = (row, line_number))]
-    fn build<'py>(
-        &self,
-        py: Python<'py>,
-        row: &Bound<'py, PyAny>,
-        line_number: Option<u64>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let row: Vec<String> = row.extract()?;
-        let cells: Vec<&str> = row.iter().map(String::as_str).collect();
-        self.build_cells(py, &cells, line_number)
-    }
 }
 
 impl RecordBuilder {
-    /// Builds a record from the cells of a row.
-    fn build_cells<'py>(
+    /// Builds a record from the cells of a row, naming the line it starts on in errors.
+    fn build<'py>(
         &self,
         py: Python<'py>,
         cells: &[&str],
@@ -813,7 +800,7 @@ impl RowReader {
             return Err(refuse("", ", which ends inside a quoted field")?);
         }
         let cells: Vec<&str> = row.iter().map(String::as_str).collect();
-        builder.build_cells(py, &cells, None)
+        builder.build(py, &cells, None)
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -854,7 +841,7 @@ impl RowReader {
                 }
                 Some(Event::Row { line, row }) => {
                     let cells: Vec<&str> = row.iter().collect();
-                    return builder.build_cells(py, &cells, Some(line)).map(Some);
+                    return builder.build(py, &cells, Some(line)).map(Some);
                 }
             }
         }

@@ -18,8 +18,6 @@ class RecordBuilder:
         counters: list[tuple[str, list[tuple[Any, str, int]]]],
         file_name: str | None,
     ) -> None: ...
-    def build(self, row: list[str], line_number: int | None) -> Any:
-        """Build a record from a row, naming the line it starts on in errors."""
 
 class RecordFormatter:
     """Writes records of one type as lines of text, one field per column."""

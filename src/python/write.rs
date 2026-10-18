@@ -130,22 +130,26 @@ pub struct RecordFormatter {
     labels: Vec<String>,
 }
 
+/// The description of a field that Python hands the formatter: its name, how it is written and
+/// the details of that, its text for None, and the error for a value it cannot write.
+type OutFieldSpec<'py> = (
+    Bound<'py, PyString>,
+    String,
+    Bound<'py, PyString>,
+    Option<Bound<'py, PyAny>>,
+    String,
+);
+
 #[pymethods]
 impl RecordFormatter {
     #[new]
     #[pyo3(signature = (
         record_type, fields, extra, encode, delimiter, line_end, comment_prefixes, quoting, labels
     ))]
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         record_type: Bound<'_, PyType>,
-        fields: Vec<(
-            Bound<'_, PyString>,
-            String,
-            Bound<'_, PyString>,
-            Option<Bound<'_, PyAny>>,
-            String,
-        )>,
+        fields: Vec<OutFieldSpec<'_>>,
         extra: Option<Bound<'_, PyString>>,
         encode: Bound<'_, PyAny>,
         delimiter: char,
