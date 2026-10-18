@@ -219,9 +219,7 @@ class DelimitedDataReader(
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
         layout: list[str] = expected if found is None else found
-        self._counters.locate(layout)
         index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
-        counters, file_name = self._counters, self._file_name
         self._builder: RecordBuilder = RecordBuilder(
             record_type,
             [
@@ -236,8 +234,8 @@ class DelimitedDataReader(
                 self._extra_field,
                 [index for index, name in enumerate(layout) if name not in columns],
             ),
-            (lambda row, line: counters.read(row, line, file_name)) if counters else None,
-            file_name,
+            self._counters.locate(layout),
+            self._file_name,
         )
         self._rows.bind(self._builder)
 

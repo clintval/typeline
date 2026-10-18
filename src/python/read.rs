@@ -6,8 +6,8 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBool, PyBytes, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyIterator, PyList,
-    PyString, PyTime, PyTuple, PyType, PyTzInfo,
+    PyBool, PyBytes, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyIterator, PyString,
+    PyTime, PyTuple, PyType, PyTzInfo,
 };
 
 use crate::dates::{self, Zone};
@@ -334,6 +334,20 @@ fn int<'py>(py: Python<'py>, text: &str) -> Option<Bound<'py, PyAny>> {
     }
 }
 
+/// Reads a count of ASCII digits, e.g. `007`, of any size.
+fn count<'py>(py: Python<'py>, text: &str) -> Option<PyResult<Bound<'py, PyAny>>> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(match text.parse::<u64>() {
+        Ok(value) => value
+            .into_pyobject(py)
+            .map(Bound::into_any)
+            .map_err(PyErr::from),
+        Err(_) => py.get_type::<PyInt>().call1((text,)),
+    })
+}
+
 /// Reads a JSON number, or `nan`, `inf`, or `-inf`, as Python writes them.
 fn float(text: &str) -> Option<f64> {
     match text {
@@ -369,9 +383,16 @@ pub struct RecordBuilder {
     fields: Vec<Field>,
     width: usize,
     extra: Option<(Py<PyString>, Vec<usize>)>,
-    row_fields: Option<Py<PyAny>>,
+    counters: Vec<Counts>,
+    counter_type: Py<PyAny>,
     file_name: Option<String>,
     decode_error: Py<PyType>,
+}
+
+/// A field that counts the members of an enum, each in its own column.
+struct Counts {
+    name: Py<PyString>,
+    members: Vec<(Py<PyAny>, String, usize)>,
 }
 
 /// The description of a field held in one column that Python hands the builder: its name, its
@@ -387,10 +408,17 @@ type FieldSpec<'py> = (
     String,
 );
 
+/// The description of a field that counts the members of an enum: its name, and each member with
+/// the name and index of its column.
+type CountsSpec<'py> = (
+    Bound<'py, PyString>,
+    Vec<(Bound<'py, PyAny>, String, usize)>,
+);
+
 #[pymethods]
 impl RecordBuilder {
     #[new]
-    #[pyo3(signature = (record_type, fields, init, width, extra, row_fields, file_name))]
+    #[pyo3(signature = (record_type, fields, init, width, extra, counters, file_name))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         record_type: Bound<'_, PyType>,
@@ -398,7 +426,7 @@ impl RecordBuilder {
         init: Option<Vec<String>>,
         width: usize,
         extra: Option<(Bound<'_, PyString>, Vec<usize>)>,
-        row_fields: Option<Bound<'_, PyAny>>,
+        counters: Vec<CountsSpec<'_>>,
         file_name: Option<String>,
     ) -> PyResult<Self> {
         let py = record_type.py();
@@ -430,7 +458,17 @@ impl RecordBuilder {
             fields,
             width,
             extra: extra.map(|(name, columns)| (name.unbind(), columns)),
-            row_fields: row_fields.map(Bound::unbind),
+            counters: counters
+                .into_iter()
+                .map(|(name, members)| Counts {
+                    name: name.unbind(),
+                    members: members
+                        .into_iter()
+                        .map(|(member, column, index)| (member.unbind(), column, index))
+                        .collect(),
+                })
+                .collect(),
+            counter_type: py.import("collections")?.getattr("Counter")?.unbind(),
             file_name,
             decode_error: py
                 .import("msgspec")?
@@ -484,12 +522,21 @@ impl RecordBuilder {
             }),
             None => Target::Arguments(PyDict::new(py), Vec::new()),
         };
-        if let Some(row_fields) = &self.row_fields {
-            let row = PyList::new(py, cells)?;
-            let values = row_fields.bind(py).call1((row, line_number))?;
-            for (name, value) in values.cast::<PyDict>()?.iter() {
-                self.place(&mut target, name.cast::<PyString>()?, value)?;
+        for counts in &self.counters {
+            let counter = self.counter_type.bind(py).call0()?;
+            for (member, column, index) in &counts.members {
+                let text = cells[*index];
+                let Some(count) = count(py, text) else {
+                    return Err(PyValueError::new_err(format!(
+                        "Could not read column '{column}' of field '{}' as a count from \
+                         '{text}'{}!",
+                        counts.name.bind(py),
+                        on_line(line_number, file_name),
+                    )));
+                };
+                counter.set_item(member.bind(py), count?)?;
             }
+            self.place(&mut target, counts.name.bind(py), counter)?;
         }
         let decode_error = self.decode_error.bind(py);
         for field in &self.fields {

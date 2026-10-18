@@ -15,7 +15,7 @@ class RecordBuilder:
         init: list[str] | None,
         width: int,
         extra: tuple[str, list[int]] | None,
-        row_fields: Callable[[list[str], int | None], dict[str, Any]] | None,
+        counters: list[tuple[str, list[tuple[Any, str, int]]]],
         file_name: str | None,
     ) -> None: ...
     def build(self, row: list[str], line_number: int | None) -> Any:
