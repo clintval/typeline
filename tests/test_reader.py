@@ -2,7 +2,15 @@ import csv
 from dataclasses import InitVar
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import make_dataclass
+from datetime import date
+from datetime import datetime
+from datetime import time
+from datetime import timedelta
+from datetime import timezone
+from decimal import Decimal
 from enum import Enum
+from enum import IntEnum
 from io import BytesIO
 from io import StringIO
 from pathlib import Path
@@ -12,6 +20,7 @@ from typing import Literal
 from typing import NewType
 from typing import Optional  # pyright: ignore[reportDeprecated]
 from typing import cast
+from uuid import UUID
 
 import pytest
 
@@ -537,3 +546,137 @@ def test_reader_builds_a_record_with_an_init_var_through_its_init() -> None:
     (record,) = list(TsvReader[Scaled](StringIO("4\n"), header=False))
 
     assert record.value == 40
+
+
+class Level(IntEnum):
+    """A level, written as its integer value."""
+
+    LOW = 1
+    HIGH = 2
+
+
+Count = NewType("Count", int)
+"""A count, which is an integer."""
+
+
+@dataclass
+class Scalars:
+    """A record of the scalar types the reader reads natively."""
+
+    day: date
+    moment: datetime
+    clock: time
+    key: UUID
+    amount: Decimal
+    level: Level
+    rank: Literal[1, 2]
+    flag: Literal[True]
+    either: int | str
+    number: int | float | None
+    count: Count
+
+
+def test_reader_reads_back_every_scalar_a_writer_writes() -> None:
+    """Test that dates, times, UUIDs, decimals, enums, literals, and unions read back as written."""
+    records = [
+        Scalars(
+            day=date(2021, 3, 4),
+            moment=datetime(2021, 3, 4, 5, 6, 7, 123456, tzinfo=timezone.utc),
+            clock=time(5, 6, 7),
+            key=UUID("3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+            amount=Decimal("1.50"),
+            level=Level.HIGH,
+            rank=2,
+            flag=True,
+            either=5,
+            number=1.5,
+            count=Count(3),
+        ),
+        Scalars(
+            day=date(1, 1, 1),
+            moment=datetime(2021, 3, 4, 5, 6, 7, tzinfo=timezone(timedelta(hours=-5, minutes=-30))),
+            clock=time(23, 59, 59, 999999, tzinfo=timezone(timedelta(hours=1))),
+            key=UUID(int=0),
+            amount=Decimal("-0.001"),
+            level=Level.LOW,
+            rank=1,
+            flag=True,
+            either="007",
+            number=None,
+            count=Count(-4),
+        ),
+    ]
+    stream = StringIO()
+    TsvWriter[Scalars](stream).write_all(records)
+
+    assert list(TsvReader[Scalars](StringIO(stream.getvalue()), header=False)) == records
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("2021-03-04T05:06:07", datetime(2021, 3, 4, 5, 6, 7)),
+        ("2021-03-04 05:06:07z", datetime(2021, 3, 4, 5, 6, 7, tzinfo=timezone.utc)),
+        ("2021-03-04T05:06:07-00:00", datetime(2021, 3, 4, 5, 6, 7, tzinfo=timezone.utc)),
+        ("2021-03-04T05:06:07.1234567", datetime(2021, 3, 4, 5, 6, 7, 123457)),
+        ("2021-03-04T23:59:59.9999995", datetime(2021, 3, 5)),
+        (
+            "2021-03-04T05:06:07+0530",
+            datetime(2021, 3, 4, 5, 6, 7, tzinfo=timezone(timedelta(hours=5, minutes=30))),
+        ),
+    ],
+)
+def test_reader_reads_rfc_3339_datetimes(text: str, expected: datetime) -> None:
+    """Test that datetimes are read to the microsecond, rounding, with or without an offset."""
+
+    @dataclass
+    class Moment:
+        moment: datetime
+
+    (record,) = list(TsvReader[Moment](StringIO(f"{text}\n"), header=False))
+
+    assert record.moment == expected
+    assert record.moment.utcoffset() == expected.utcoffset()
+
+
+@pytest.mark.parametrize(
+    ("record_type", "text"),
+    [
+        (date, "2021-02-30"),
+        (date, "0000-01-01"),
+        (datetime, "2021-03-04"),
+        (datetime, "2021-03-04T05:06:07[America/New_York]"),
+        (time, "25:00:00"),
+        (UUID, "3f2504e0-4f89-11d3-9a0c-0305e82c330"),
+        (Decimal, "one"),
+        (Level, "3"),
+        (int | float, "x"),
+    ],
+)
+def test_reader_names_a_scalar_it_cannot_read(record_type: Any, text: str) -> None:
+    """Test that a scalar the reader cannot read raises an error naming its field and text."""
+    record: Any = make_record(record_type)
+    reader: TsvReader[Any] = cast(Any, TsvReader)[record](StringIO(""), header=False)
+    message = rf"^Could not read field 'value' of type .* from text '{escape(text)}'!"
+    with pytest.raises(ValueError, match=message):
+        _ = reader.decode(f"{text}\n")
+
+
+def make_record(field_type: Any) -> type[Any]:
+    """Make a record type of one field, named value, of a type."""
+    return make_dataclass("Record", [("value", field_type)])
+
+
+def test_reader_reads_a_union_of_plain_types_as_its_first_type_that_fits() -> None:
+    """Test that a union of plain types reads a boolean, then an integer, a float, and text."""
+
+    @dataclass
+    class Mixed:
+        value: bool | int | float | str
+
+    texts = ["true", "12", "-0", "1.5", "nan", "007", "x"]
+    reader = TsvReader[Mixed](StringIO("".join(f"{text}\n" for text in texts)), header=False)
+    values = [record.value for record in reader]
+
+    assert [type(value) for value in values] == [bool, int, int, float, float, str, str]
+    assert values[:4] == [True, 12, 0, 1.5]

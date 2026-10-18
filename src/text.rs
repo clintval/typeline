@@ -91,6 +91,21 @@ pub fn json_string(text: &str) -> Vec<u8> {
     json
 }
 
+/// Reads a UUID of 32 hexadecimal digits, with hyphens between its groups or none, in any case.
+pub fn uuid(text: &str) -> Option<u128> {
+    let bytes = text.as_bytes();
+    let hyphenated = bytes.len() == 36 && [8, 13, 18, 23].iter().all(|&at| bytes[at] == b'-');
+    let digits: Vec<u8> = if hyphenated {
+        bytes.iter().copied().filter(|&byte| byte != b'-').collect()
+    } else {
+        bytes.to_vec()
+    };
+    if digits.len() != 32 || !digits.iter().all(u8::is_ascii_hexdigit) {
+        return None;
+    }
+    u128::from_str_radix(std::str::from_utf8(&digits).ok()?, 16).ok()
+}
+
 /// Names the line a record starts on in an error, and its file when it has a name.
 pub fn on_line(line_number: Option<u64>, file_name: Option<&str>) -> String {
     match (line_number, file_name) {
@@ -219,6 +234,22 @@ mod tests {
         ];
         for (value, text) in cases {
             assert_eq!(json_float(value), text, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn uuid_reads_32_hexadecimal_digits_with_or_without_hyphens() {
+        let value = 0x3f25_04e0_4f89_11d3_9a0c_0305_e82c_3301_u128;
+        assert_eq!(uuid("3f2504e0-4f89-11d3-9a0c-0305e82c3301"), Some(value));
+        assert_eq!(uuid("3F2504E04F8911D39A0C0305E82C3301"), Some(value));
+        for text in [
+            "",
+            "3f2504e0-4f89-11d3-9a0c-0305e82c330",
+            "3f2504e04f8911d39a0c0305e82c330g",
+            "+f2504e04f8911d39a0c0305e82c3301",
+            "3f2504e0-4f8911d3-9a0c-0305e82c33011",
+        ] {
+            assert_eq!(uuid(text), None, "{text:?}");
         }
     }
 

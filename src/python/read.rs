@@ -6,14 +6,15 @@ use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBool, PyBytes, PyDict, PyFloat, PyInt, PyIterator, PyList, PyString, PyTuple, PyType,
+    PyBool, PyBytes, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyIterator, PyList,
+    PyString, PyTime, PyTuple, PyType, PyTzInfo,
 };
 
+use crate::dates::{self, Zone};
 use crate::rows::{CHUNK, Event, Options, Rows, Source};
 use crate::text::{json_string, looks_like_json, on_line, plain_float, plain_int};
 
 /// How a field is read from the text of its column.
-#[derive(Clone, Copy)]
 enum Lane {
     /// Keep the text as it is.
     Text,
@@ -23,28 +24,119 @@ enum Lane {
     Float,
     /// Read `true` or `false`.
     Bool,
-    /// Look the text up in a table, e.g. of an enum's members by value.
-    Lookup,
-    /// Read the text with a codec.
-    Codec,
+    /// Read the first of its plain types the text reads as: a boolean, integer, float, or text.
+    Union(Vec<Plain>),
+    /// Look the text up in a table, e.g. of an enum's members by the text of their values.
+    Lookup(HashMap<String, Py<PyAny>>),
+    /// Read an ISO 8601 date, e.g. `2021-03-04`.
+    Date,
+    /// Read an ISO 8601 datetime, e.g. `2021-03-04T05:06:07Z`.
+    DateTime,
+    /// Read an ISO 8601 time, e.g. `05:06:07`.
+    Time,
+    /// Read a UUID of 32 hexadecimal digits, with or without hyphens.
+    Uuid {
+        alloc: ffi::allocfunc,
+        class: Py<PyType>,
+        unknown: Py<PyAny>,
+    },
+    /// Read a decimal with Python's `Decimal`.
+    Decimal(Py<PyAny>),
+    /// Read the text with a codec, keeping a value of the field's class as it is and coercing any
+    /// other value to the field's type.
+    Codec {
+        read: Py<PyAny>,
+        trusted: Option<Py<PyAny>>,
+        coerce: Py<PyAny>,
+    },
     /// Decode the text as JSON with the field's typed decoder.
-    Decode,
+    Decode { decode: Py<PyAny>, json_like: bool },
 }
 
 impl Lane {
-    fn named(name: &str) -> PyResult<Self> {
-        match name {
-            "text" => Ok(Self::Text),
-            "int" => Ok(Self::Int),
-            "float" => Ok(Self::Float),
-            "bool" => Ok(Self::Bool),
-            "lookup" => Ok(Self::Lookup),
-            "codec" => Ok(Self::Codec),
-            "decode" => Ok(Self::Decode),
-            _ => Err(PyValueError::new_err(format!("Unknown lane '{name}'!"))),
-        }
+    /// Builds a lane from its name and the details it needs, e.g. a codec.
+    fn new(py: Python<'_>, name: &str, details: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let needed = || {
+            details.ok_or_else(|| {
+                PyValueError::new_err(format!("The lane '{name}' needs its details!"))
+            })
+        };
+        Ok(match name {
+            "text" => Self::Text,
+            "int" => Self::Int,
+            "float" => Self::Float,
+            "bool" => Self::Bool,
+            "union" => {
+                let names: Vec<String> = needed()?.extract()?;
+                let mut members = names
+                    .iter()
+                    .map(|member| match member.as_str() {
+                        "bool" => Ok(Plain::Bool),
+                        "int" => Ok(Plain::Int),
+                        "float" => Ok(Plain::Float),
+                        "text" => Ok(Plain::Text),
+                        _ => Err(PyValueError::new_err(format!("Unknown member '{member}'!"))),
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                members.sort_unstable();
+                Self::Union(members)
+            }
+            "lookup" => Self::Lookup(
+                needed()?
+                    .cast::<PyDict>()?
+                    .iter()
+                    .map(|(key, value)| Ok((key.extract::<String>()?, value.unbind())))
+                    .collect::<PyResult<_>>()?,
+            ),
+            "date" => Self::Date,
+            "datetime" => Self::DateTime,
+            "time" => Self::Time,
+            "uuid" => {
+                let uuid = py.import("uuid")?;
+                let class = uuid.getattr("UUID")?.cast_into::<PyType>()?;
+                Self::Uuid {
+                    alloc: alloc_of(&class)?,
+                    class: class.unbind(),
+                    unknown: uuid.getattr("SafeUUID")?.getattr("unknown")?.unbind(),
+                }
+            }
+            "decimal" => Self::Decimal(py.import("decimal")?.getattr("Decimal")?.unbind()),
+            "codec" => {
+                let (read, trusted, coerce): CodecDetails<'_> = needed()?.extract()?;
+                Self::Codec {
+                    read: read.unbind(),
+                    trusted: trusted.map(Bound::unbind),
+                    coerce: coerce.unbind(),
+                }
+            }
+            "decode" => {
+                let (decode, json_like): (Bound<'_, PyAny>, bool) = needed()?.extract()?;
+                Self::Decode {
+                    decode: decode.unbind(),
+                    json_like,
+                }
+            }
+            _ => return Err(PyValueError::new_err(format!("Unknown lane '{name}'!"))),
+        })
     }
 }
+
+/// A plain type of a union, in the order a union tries them.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Plain {
+    Bool,
+    Int,
+    Float,
+    Text,
+}
+
+/// How a codec field is read: the codec's reader, the class of a value kept as it is, and how any
+/// other value is coerced to the field's type.
+type CodecDetails<'py> = (
+    Bound<'py, PyAny>,
+    Option<Bound<'py, PyAny>>,
+    Bound<'py, PyAny>,
+);
 
 /// The text of a field: a slice of a row read natively, or a string from Python.
 enum Cell<'a, 'py> {
@@ -75,11 +167,6 @@ struct Field {
     column: usize,
     lane: Lane,
     none: Option<String>,
-    json_like: bool,
-    table: HashMap<String, Py<PyAny>>,
-    read: Option<Py<PyAny>>,
-    trusted: Option<Py<PyAny>>,
-    coerce: Option<Py<PyAny>>,
     label: String,
     place: String,
 }
@@ -101,60 +188,50 @@ impl Field {
         if self.none.as_deref() == Some(text) {
             return Ok(py.None().into_bound(py));
         }
-        let read = match self.lane {
+        let read = match &self.lane {
             Lane::Text => Some(Ok(cell.object(py))),
             Lane::Int => int(py, text).map(Ok),
             Lane::Float => float(text).map(|value| Ok(PyFloat::new(py, value).into_any())),
-            Lane::Bool => match text {
-                "true" => Some(Ok(PyBool::new(py, true).to_owned().into_any())),
-                "false" => Some(Ok(PyBool::new(py, false).to_owned().into_any())),
-                _ => None,
-            },
-            Lane::Lookup => self.table.get(text).map(|value| Ok(value.bind(py).clone())),
-            Lane::Codec => Some(self.codec(py, cell)),
-            Lane::Decode => Some(self.decode(py, text, decode_error)),
+            Lane::Bool => {
+                boolean(text).map(|value| Ok(PyBool::new(py, value).to_owned().into_any()))
+            }
+            Lane::Union(members) => members.iter().find_map(|member| match member {
+                Plain::Bool => {
+                    boolean(text).map(|value| Ok(PyBool::new(py, value).to_owned().into_any()))
+                }
+                Plain::Int => int(py, text).map(Ok),
+                Plain::Float => float(text).map(|value| Ok(PyFloat::new(py, value).into_any())),
+                Plain::Text => Some(Ok(cell.object(py))),
+            }),
+            Lane::Lookup(table) => table.get(text).map(|value| Ok(value.bind(py).clone())),
+            Lane::Date => Some(read_date(py, text)),
+            Lane::DateTime => Some(read_datetime(py, text)),
+            Lane::Time => Some(read_time(py, text)),
+            Lane::Uuid {
+                alloc,
+                class,
+                unknown,
+            } => crate::text::uuid(text)
+                .map(|value| build_uuid(py, *alloc, class.bind(py), unknown.bind(py), value)),
+            Lane::Decimal(decimal) => Some(decimal.bind(py).call1((text,))),
+            Lane::Codec {
+                read,
+                trusted,
+                coerce,
+            } => Some(codec(py, cell, read, trusted.as_ref(), coerce)),
+            Lane::Decode { decode, json_like } => Some(decode_json(
+                py,
+                text,
+                decode.bind(py),
+                *json_like,
+                decode_error,
+            )),
         };
         match read {
             Some(Ok(value)) => Ok(value),
             Some(Err(cause)) => Err(self.unreadable(py, text, line_number, file_name, Some(cause))),
             None => Err(self.unreadable(py, text, line_number, file_name, None)),
         }
-    }
-
-    /// Reads text with the field's codec, keeping a value of the field's class as it is and
-    /// coercing any other value to the field's type.
-    fn codec<'py>(&self, py: Python<'py>, cell: &Cell<'_, 'py>) -> PyResult<Bound<'py, PyAny>> {
-        let (Some(read), Some(coerce)) = (&self.read, &self.coerce) else {
-            return Err(PyValueError::new_err("A codec field needs a codec!"));
-        };
-        let value = read.bind(py).call1((cell.object(py),))?;
-        match &self.trusted {
-            Some(trusted) if value.get_type().is(trusted.bind(py)) => Ok(value),
-            _ => coerce.bind(py).call1((value,)),
-        }
-    }
-
-    /// Decodes text with the field's typed decoder: as JSON when it looks like JSON, and else,
-    /// or when it is not valid JSON after all, as a JSON string.
-    fn decode<'py>(
-        &self,
-        py: Python<'py>,
-        text: &str,
-        decode_error: &Bound<'py, PyType>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let Some(decode) = &self.read else {
-            return Err(PyValueError::new_err("A decoded field needs a decoder!"));
-        };
-        let decode = decode.bind(py);
-        if self.json_like && looks_like_json(text) {
-            match decode.call1((PyBytes::new(py, text.as_bytes()),)) {
-                Err(error)
-                    if error.is_instance(py, decode_error)
-                        && jiter::JsonValue::parse(text.as_bytes(), false).is_err() => {}
-                decoded => return decoded,
-            }
-        }
-        decode.call1((PyBytes::new(py, &json_string(text)),))
     }
 
     /// Explains that the field could not be read from its text, and why when there is a cause.
@@ -179,6 +256,132 @@ impl Field {
         ));
         error.set_cause(py, cause);
         error
+    }
+}
+
+/// Reads text with a codec, keeping a value of the field's class as it is and coercing any other
+/// value to the field's type.
+fn codec<'py>(
+    py: Python<'py>,
+    cell: &Cell<'_, 'py>,
+    read: &Py<PyAny>,
+    trusted: Option<&Py<PyAny>>,
+    coerce: &Py<PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let value = read.bind(py).call1((cell.object(py),))?;
+    match trusted {
+        Some(trusted) if value.get_type().is(trusted.bind(py)) => Ok(value),
+        _ => coerce.bind(py).call1((value,)),
+    }
+}
+
+/// Decodes text with a typed decoder: as JSON when it looks like JSON, and else, or when it is
+/// not valid JSON after all, as a JSON string.
+fn decode_json<'py>(
+    py: Python<'py>,
+    text: &str,
+    decode: &Bound<'py, PyAny>,
+    json_like: bool,
+    decode_error: &Bound<'py, PyType>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if json_like && looks_like_json(text) {
+        match decode.call1((PyBytes::new(py, text.as_bytes()),)) {
+            Err(error)
+                if error.is_instance(py, decode_error)
+                    && jiter::JsonValue::parse(text.as_bytes(), false).is_err() => {}
+            decoded => return decoded,
+        }
+    }
+    decode.call1((PyBytes::new(py, &json_string(text)),))
+}
+
+/// Reads a date, e.g. `2021-03-04`.
+fn read_date<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    let day = dates::date(text).map_err(PyValueError::new_err)?;
+    Ok(PyDate::new(py, day.year, day.month, day.day)?.into_any())
+}
+
+/// Reads a datetime, e.g. `2021-03-04T05:06:07Z`.
+fn read_datetime<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    let (day, clock, zone) = dates::datetime(text).map_err(PyValueError::new_err)?;
+    let zone = tzinfo(py, zone)?;
+    Ok(PyDateTime::new(
+        py,
+        day.year,
+        day.month,
+        day.day,
+        clock.hour,
+        clock.minute,
+        clock.second,
+        clock.microsecond,
+        zone.as_ref(),
+    )?
+    .into_any())
+}
+
+/// Reads a time, e.g. `05:06:07`.
+fn read_time<'py>(py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    let (clock, zone) = dates::time(text).map_err(PyValueError::new_err)?;
+    let zone = tzinfo(py, zone)?;
+    let time = PyTime::new(
+        py,
+        clock.hour,
+        clock.minute,
+        clock.second,
+        clock.microsecond,
+        zone.as_ref(),
+    )?;
+    Ok(time.into_any())
+}
+
+/// Returns the Python time zone of a zone: none, UTC, or a fixed offset.
+fn tzinfo(py: Python<'_>, zone: Zone) -> PyResult<Option<Bound<'_, PyTzInfo>>> {
+    Ok(match zone {
+        Zone::Naive => None,
+        Zone::Utc => Some(PyTzInfo::utc(py)?.to_owned()),
+        Zone::Fixed(seconds) => {
+            let offset = PyDelta::new(py, 0, seconds, 0, true)?;
+            Some(PyTzInfo::fixed_offset(py, offset)?)
+        }
+    })
+}
+
+/// Builds a UUID as Python's `uuid.UUID` holds one: its integer, and whether it is safe.
+fn build_uuid<'py>(
+    py: Python<'py>,
+    alloc: ffi::allocfunc,
+    class: &Bound<'py, PyType>,
+    unknown: &Bound<'py, PyAny>,
+    value: u128,
+) -> PyResult<Bound<'py, PyAny>> {
+    // SAFETY: `alloc` is the UUID class's own `tp_alloc`, called with that class.
+    let uuid = unsafe { Bound::from_owned_ptr_or_err(py, alloc(class.as_ptr().cast(), 0))? };
+    let integer = value.into_pyobject(py)?.into_any();
+    set_field(&uuid, &PyString::intern(py, "int"), &integer)?;
+    set_field(&uuid, &PyString::intern(py, "is_safe"), unknown)?;
+    Ok(uuid)
+}
+
+/// Returns the `tp_alloc` of a type, which allocates an instance without calling `__init__`.
+fn alloc_of(class: &Bound<'_, PyType>) -> PyResult<ffi::allocfunc> {
+    // SAFETY: every type has a `tp_alloc` slot, which takes the type and a count of items.
+    unsafe {
+        let slot = ffi::PyType_GetSlot(class.as_type_ptr(), ffi::Py_tp_alloc);
+        if slot.is_null() {
+            return Err(PyTypeError::new_err(
+                "Instances of this type cannot be allocated!",
+            ));
+        }
+        Ok(std::mem::transmute::<*mut std::ffi::c_void, ffi::allocfunc>(slot))
+    }
+}
+
+/// Reads `true` or `false`.
+fn boolean(text: &str) -> Option<bool> {
+    match text {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
     }
 }
 
@@ -247,15 +450,12 @@ pub struct RecordBuilder {
     decode_error: Py<PyType>,
 }
 
-/// The description of a field held in one column that Python hands the builder.
+/// The description of a field held in one column that Python hands the builder: its column, its
+/// lane and the details of the lane, its text for None, and how it and its column are named.
 type FieldSpec<'py> = (
     usize,
     String,
     Option<String>,
-    bool,
-    Option<Bound<'py, PyDict>>,
-    Option<Bound<'py, PyAny>>,
-    Option<Bound<'py, PyAny>>,
     Option<Bound<'py, PyAny>>,
     String,
     String,
@@ -279,31 +479,18 @@ impl RecordBuilder {
         file_name: Option<String>,
         decode_error: Bound<'_, PyType>,
     ) -> PyResult<Self> {
+        let py = record_type.py();
         let fields = fields
             .into_iter()
-            .map(
-                |(column, lane, none, json_like, table, read, trusted, coerce, label, place)| {
-                    let table = match table {
-                        Some(table) => table
-                            .iter()
-                            .map(|(key, value)| Ok((key.extract::<String>()?, value.unbind())))
-                            .collect::<PyResult<_>>()?,
-                        None => HashMap::new(),
-                    };
-                    Ok(Field {
-                        column,
-                        lane: Lane::named(&lane)?,
-                        none,
-                        json_like,
-                        table,
-                        read: read.map(Bound::unbind),
-                        trusted: trusted.map(Bound::unbind),
-                        coerce: coerce.map(Bound::unbind),
-                        label,
-                        place,
-                    })
-                },
-            )
+            .map(|(column, lane, none, details, label, place)| {
+                Ok(Field {
+                    column,
+                    lane: Lane::new(py, &lane, details.as_ref())?,
+                    none,
+                    label,
+                    place,
+                })
+            })
             .collect::<PyResult<Vec<_>>>()?;
         let slots = slots
             .into_iter()
@@ -325,16 +512,7 @@ impl RecordBuilder {
             })
             .collect::<PyResult<Vec<_>>>()?;
         let alloc = if direct {
-            // SAFETY: every type has a `tp_alloc` slot, which takes the type and a count of items.
-            unsafe {
-                let slot = ffi::PyType_GetSlot(record_type.as_type_ptr(), ffi::Py_tp_alloc);
-                if slot.is_null() {
-                    return Err(PyTypeError::new_err(
-                        "Records of this type cannot be allocated!",
-                    ));
-                }
-                Some(std::mem::transmute::<*mut std::ffi::c_void, ffi::allocfunc>(slot))
-            }
+            Some(alloc_of(&record_type)?)
         } else {
             None
         };

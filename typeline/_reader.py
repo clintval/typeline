@@ -5,22 +5,31 @@ from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
+from datetime import date
+from datetime import datetime
+from datetime import time
+from decimal import Decimal
 from enum import Enum
+from enum import Flag
 from functools import partial
 from inspect import Parameter
 from inspect import signature
 from io import StringIO
 from pathlib import Path
+from types import NoneType
 from types import TracebackType
+from types import UnionType
 from typing import Any
 from typing import Callable
 from typing import Generic
 from typing import Literal
 from typing import TextIO
 from typing import TypeAlias
+from typing import Union  # pyright: ignore[reportDeprecated]
 from typing import cast
 from typing import get_args
 from typing import get_origin
+from uuid import UUID
 
 from msgspec import DecodeError
 from msgspec import convert
@@ -55,27 +64,28 @@ from .codecs import Codecs
 DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 """The default line prefixes that will tell the reader to skip those lines."""
 
-NATIVE_LANES: dict[type, str] = {str: "text", int: "int", float: "float", bool: "bool"}
+NATIVE_LANES: dict[type, str] = {
+    bool: "bool",
+    date: "date",
+    datetime: "datetime",
+    Decimal: "decimal",
+    float: "float",
+    int: "int",
+    str: "text",
+    time: "time",
+    UUID: "uuid",
+}
 """The types the native engine reads itself, and the lane it reads each in."""
+
+PLAIN_LANES: frozenset[str] = frozenset({"bool", "float", "int", "text"})
+"""The lanes of the plain types a union of them may hold."""
 
 POSITIONAL: frozenset[Any] = frozenset({Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD})
 """The kinds of parameter a field may be passed to positionally."""
 
-FieldSpec: TypeAlias = tuple[
-    int,
-    str,
-    str | None,
-    bool,
-    dict[str, Any] | None,
-    Callable[[Any], Any] | None,
-    type | None,
-    Callable[[Any], Any] | None,
-    str,
-    str,
-]
-"""How the native engine reads a field: its column, lane, none text, whether its text may be JSON,
-the table it is looked up in, its codec or decoder, the class of a codec's value kept as it is, how
-other values of a codec are coerced, and how the field and its column are named in errors."""
+FieldSpec: TypeAlias = tuple[int, str, str | None, Any, str, str]
+"""How the native engine reads a field: its column, its lane and the details of the lane, its
+text for None, and how the field and its column are named in errors."""
 
 
 class ReaderOptions(TypedDict, total=False, closed=True):
@@ -257,7 +267,7 @@ class DelimitedDataReader(
     def _field_spec(self, name: str, column: int, codecs: Codecs) -> FieldSpec:
         """Decide how the native engine reads a field from the text of its column."""
         field_type = self._field_type_map[name]
-        kind = strip_optional(field_type)
+        kind = supertype(strip_optional(field_type))
         label = f"field '{name}' of type {type_name(field_type)}"
         place = in_column(name, self._column_of[name])
         none = self._none_field if accepts_none(field_type) else None
@@ -269,30 +279,21 @@ class DelimitedDataReader(
             coerce = partial(
                 convert, type=field_type, strict=False, str_keys=True, dec_hook=self._convert_hook
             )
-            return (
-                column,
-                "codec",
-                missing,
-                False,
-                None,
-                codec.from_text,
-                trusted,
-                coerce,
-                label,
-                place,
-            )
+            return (column, "codec", missing, (codec.from_text, trusted, coerce), label, place)
         lane = next((lane for t, lane in NATIVE_LANES.items() if t is kind), None)
         if lane is not None:
-            return (column, lane, none, False, None, None, None, None, label, place)
+            return (column, lane, none, None, label, place)
+        members = plain_members(kind)
+        if members is not None:
+            return (column, "union", none, members, label, place)
         table = lookup_table(kind)
         if table is not None:
-            return (column, "lookup", none, False, table, None, None, None, label, place)
+            return (column, "lookup", none, table, label, place)
         try:
             decode = JSONDecoder(field_type, strict=False, dec_hook=self._convert_hook).decode
         except TypeError as exception:
             raise TypeError(f"Cannot read {label}, which msgspec cannot decode!") from exception
-        json_like = not is_text(field_type)
-        return (column, "decode", none, json_like, None, decode, None, None, label, place)
+        return (column, "decode", none, (decode, not is_text(field_type)), label, place)
 
     def _record_builder(self, codecs: Codecs) -> RecordBuilder:
         """Build the native engine that reads a row's columns into a record."""
@@ -448,15 +449,52 @@ class TsvReader(DelimitedDataReader[RecordType], delimiter="\t"):
     """
 
 
+def supertype(kind: Any) -> Any:
+    """Return the type a `NewType` stands for, through any `NewType`s between, else the type."""
+    while hasattr(kind, "__supertype__"):
+        kind = kind.__supertype__
+    return kind
+
+
+def plain_members(kind: Any) -> list[str] | None:
+    """Return the lanes of a union of plain types, e.g. `int | str`, or None for any other type."""
+    if get_origin(kind) not in (Union, UnionType):  # pyright: ignore[reportDeprecated]
+        return None
+    lanes = [
+        next((lane for t, lane in NATIVE_LANES.items() if t is supertype(member)), None)
+        for member in get_args(kind)
+        if member is not NoneType
+    ]
+    return [lane for lane in lanes if lane] if all(lane in PLAIN_LANES for lane in lanes) else None
+
+
+def written_text(value: object) -> str | None:
+    """Return the text a writer writes for a plain value, or None for any other value."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | str):
+        return str(value)
+    return None
+
+
 def lookup_table(kind: Any) -> dict[str, Any] | None:
-    """Return the values of an enum or `Literal` by their text, when all their values are text."""
-    if isinstance(kind, type) and issubclass(kind, Enum):
-        table: dict[Any, Any] = {member.value: member for member in kind}
+    """Return the values of an enum or `Literal` by the text a writer writes for each of them.
+
+    None is returned when a value is not text, an integer, or a boolean, when two values are
+    written alike, and for a `Flag`, whose members combine into values no table can hold.
+    """
+    if isinstance(kind, type) and issubclass(kind, Enum) and not issubclass(kind, Flag):
+        values: list[tuple[object, object]] = [(member.value, member) for member in kind]
     elif get_origin(kind) is Literal:
-        table = {value: value for value in get_args(kind)}
+        values = [(value, value) for value in get_args(kind)]
     else:
         return None
-    return table if all(isinstance(value, str) for value in table) else None
+    table: dict[str, Any] = {}
+    for value, result in values:
+        text = written_text(value)
+        if text is None or table.setdefault(text, result) is not result:
+            return None
+    return table
 
 
 def builds_directly(record_type: type[Any], names: list[str]) -> bool:

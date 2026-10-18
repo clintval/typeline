@@ -11,20 +11,7 @@ class RecordBuilder:
         self,
         record_type: type[Any],
         direct: bool,
-        fields: list[
-            tuple[
-                int,
-                str,
-                str | None,
-                bool,
-                dict[str, Any] | None,
-                Callable[[Any], Any] | None,
-                type | None,
-                Callable[[Any], Any] | None,
-                str,
-                str,
-            ]
-        ],
+        fields: list[tuple[int, str, str | None, Any, str, str]],
         slots: list[tuple[str, int, str]],
         width: int,
         extra: tuple[list[int], int] | None,
