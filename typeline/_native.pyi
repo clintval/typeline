@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any
 
 from typing_extensions import Self
@@ -27,23 +28,22 @@ class RecordFormatter:
 
     def __init__(
         self,
+        record_type: type[Any],
         fields: list[tuple[str, str, str, Callable[[Any], Any] | None, str]],
-        extra: tuple[str, Callable[[Any], Any]] | None,
+        extra: str | None,
         encode: Callable[[Any], bytes],
         delimiter: str,
         line_end: str,
         comment_prefixes: list[str],
+        quoting: bool,
+        labels: list[str],
     ) -> None: ...
-    def format(self, record: object) -> str | list[str]:
-        """Format a record as its line of text, or as its texts when the line needs quoting."""
-    def write_all(
-        self,
-        records: Iterable[object],
-        record_type: type[Any],
-        write: Callable[[str], object],
-        write_one: Callable[[Any], None],
-    ) -> None:
-        """Write records to a stream in large chunks, handing others to `write_one`."""
+    def format(self, record: object) -> str:
+        """Format a record as its line of text, refusing a record of another type."""
+    def line(self, texts: Sequence[str]) -> str:
+        """Format texts as one line, e.g. a header."""
+    def write_all(self, records: Iterable[object], write: Callable[[str], object]) -> None:
+        """Write records to a stream, stopping at the first that cannot be written."""
 
 class RowReader:
     """Reads records natively from a Python text stream, one row at a time."""

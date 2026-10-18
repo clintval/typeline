@@ -42,54 +42,46 @@ impl OutField {
 enum Piece<'py> {
     Owned(String),
     Static(&'static str),
-    Object(Bound<'py, PyAny>),
+    Object(Bound<'py, PyString>),
 }
 
-impl<'py> Piece<'py> {
-    /// The text, unless it is not exactly a string that can be read as UTF-8.
-    fn text(&self) -> Option<&str> {
+impl Piece<'_> {
+    /// The text, unless it cannot be read as UTF-8.
+    fn text(&self) -> PyResult<&str> {
         match self {
-            Piece::Owned(text) => Some(text),
-            Piece::Static(text) => Some(text),
-            Piece::Object(object) => object
-                .cast::<PyString>()
-                .ok()
-                .filter(|text| text.is_exact_instance_of::<PyString>())?
-                .to_str()
-                .ok(),
-        }
-    }
-
-    /// The text as a Python object.
-    fn into_object(self, py: Python<'py>) -> Bound<'py, PyAny> {
-        match self {
-            Piece::Owned(text) => PyString::new(py, &text).into_any(),
-            Piece::Static(text) => PyString::new(py, text).into_any(),
-            Piece::Object(object) => object,
+            Piece::Owned(text) => Ok(text),
+            Piece::Static(text) => Ok(text),
+            Piece::Object(object) => object.to_str(),
         }
     }
 }
 
 /// Writes records of one type as lines of text, one field per column.
 ///
-/// A record whose texts all need no quoting is written as one line, its texts joined by the
-/// delimiter. Any other record is returned as its texts, for the csv module to quote.
+/// Texts are quoted as Python's `csv` module quotes them, or refused when quoting is off.
 #[pyclass(frozen, module = "typeline._native")]
 pub struct RecordFormatter {
+    record_type: Py<PyType>,
+    record_name: String,
     fields: Vec<OutField>,
-    extra: Option<(Py<PyString>, Py<PyAny>)>,
+    extra: Option<Py<PyString>>,
     encode: Py<PyAny>,
     delimiter: char,
     line_end: String,
     comment_prefixes: Vec<String>,
+    quoting: bool,
+    labels: Vec<String>,
 }
 
 #[pymethods]
 impl RecordFormatter {
     #[new]
-    #[pyo3(signature = (fields, extra, encode, delimiter, line_end, comment_prefixes))]
-    #[allow(clippy::type_complexity)]
+    #[pyo3(signature = (
+        record_type, fields, extra, encode, delimiter, line_end, comment_prefixes, quoting, labels
+    ))]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn new(
+        record_type: Bound<'_, PyType>,
         fields: Vec<(
             Bound<'_, PyString>,
             String,
@@ -97,11 +89,13 @@ impl RecordFormatter {
             Option<Bound<'_, PyAny>>,
             String,
         )>,
-        extra: Option<(Bound<'_, PyString>, Bound<'_, PyAny>)>,
+        extra: Option<Bound<'_, PyString>>,
         encode: Bound<'_, PyAny>,
         delimiter: char,
         line_end: String,
         comment_prefixes: Vec<String>,
+        quoting: bool,
+        labels: Vec<String>,
     ) -> PyResult<Self> {
         let fields = fields
             .into_iter()
@@ -127,32 +121,36 @@ impl RecordFormatter {
             })
             .collect::<PyResult<Vec<_>>>()?;
         Ok(Self {
+            record_name: record_type.name()?.to_string(),
+            record_type: record_type.unbind(),
             fields,
-            extra: extra.map(|(name, check)| (name.unbind(), check.unbind())),
+            extra: extra.map(Bound::unbind),
             encode: encode.unbind(),
             delimiter,
             line_end,
             comment_prefixes,
+            quoting,
+            labels,
         })
     }
 
-    /// Format a record as its line of text, or as its texts when the line needs quoting.
-    fn format<'py>(
-        &self,
-        py: Python<'py>,
-        record: &Bound<'py, PyAny>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let pieces = self.pieces(py, record)?;
-        match self.line(&pieces) {
-            Some(line) => Ok(PyString::new(py, &line).into_any()),
-            None => Ok(
-                PyList::new(py, pieces.into_iter().map(|piece| piece.into_object(py)))?.into_any(),
-            ),
-        }
+    /// Format a record as its line of text, refusing a record of another type.
+    fn format(&self, py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<String> {
+        let mut line = String::new();
+        self.append(py, record, &mut line)?;
+        Ok(line)
     }
 
-    /// Write records of the record type to a stream, handing any record that is not of the type,
-    /// or whose line needs quoting, to `write_one` once the lines before it are written.
+    /// Format texts as one line, e.g. a header.
+    fn line(&self, py: Python<'_>, texts: Vec<String>) -> PyResult<String> {
+        let pieces: Vec<Piece<'_>> = texts.into_iter().map(Piece::Owned).collect();
+        let mut line = String::new();
+        self.join(py, &pieces, &mut line)?;
+        Ok(line)
+    }
+
+    /// Write records to a stream, stopping at the first that cannot be written once the lines
+    /// before it are written.
     ///
     /// Lines of a list or tuple of records are written in large chunks. Lines of any other
     /// iterable are written one at a time, since reading it may write to the stream too, e.g. a
@@ -161,12 +159,29 @@ impl RecordFormatter {
         &self,
         py: Python<'_>,
         records: &Bound<'_, PyAny>,
-        record_type: &Bound<'_, PyType>,
         write: &Bound<'_, PyAny>,
-        write_one: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
-        let mut chunk = String::with_capacity(CHUNK);
-        let written = self.write_chunks(py, records, record_type, write, write_one, &mut chunk);
+        let limit = if records.is_exact_instance_of::<PyList>()
+            || records.is_exact_instance_of::<PyTuple>()
+        {
+            CHUNK
+        } else {
+            1
+        };
+        let mut chunk = String::new();
+        let mut written = Ok(());
+        for record in records.try_iter()? {
+            let start = chunk.len();
+            if let Err(error) = record.and_then(|record| self.append(py, &record, &mut chunk)) {
+                chunk.truncate(start);
+                written = Err(error);
+                break;
+            }
+            if chunk.len() >= limit {
+                write.call1((chunk.as_str(),))?;
+                chunk.clear();
+            }
+        }
         let flushed = if chunk.is_empty() {
             Ok(())
         } else {
@@ -177,45 +192,17 @@ impl RecordFormatter {
 }
 
 impl RecordFormatter {
-    /// Writes records into chunks, writing each chunk once it is full, and leaving the last.
-    fn write_chunks(
-        &self,
-        py: Python<'_>,
-        records: &Bound<'_, PyAny>,
-        record_type: &Bound<'_, PyType>,
-        write: &Bound<'_, PyAny>,
-        write_one: &Bound<'_, PyAny>,
-        chunk: &mut String,
-    ) -> PyResult<()> {
-        let limit = if records.is_exact_instance_of::<PyList>()
-            || records.is_exact_instance_of::<PyTuple>()
-        {
-            CHUNK
-        } else {
-            1
-        };
-        for record in records.try_iter()? {
-            let record = record?;
-            let line = if record.is_instance(record_type)? {
-                self.line(&self.pieces(py, &record)?)
-            } else {
-                None
-            };
-            if let Some(line) = line {
-                chunk.push_str(&line);
-                if chunk.len() >= limit {
-                    write.call1((chunk.as_str(),))?;
-                    chunk.clear();
-                }
-                continue;
-            }
-            if !chunk.is_empty() {
-                write.call1((chunk.as_str(),))?;
-                chunk.clear();
-            }
-            write_one.call1((record,))?;
+    /// Appends the line of a record, refusing a record of another type.
+    fn append(&self, py: Python<'_>, record: &Bound<'_, PyAny>, line: &mut String) -> PyResult<()> {
+        if !record.is_instance(self.record_type.bind(py))? {
+            return Err(PyValueError::new_err(format!(
+                "Expected {} but found {}!",
+                self.record_name,
+                record.get_type().name()?
+            )));
         }
-        Ok(())
+        let pieces = self.pieces(py, record)?;
+        self.join(py, &pieces, line)
     }
 
     /// Writes each field of a record into its text.
@@ -228,31 +215,41 @@ impl RecordFormatter {
         for field in &self.fields {
             let value = record.getattr(field.name.bind(py))?;
             if value.is_none() && !matches!(field.out, Out::Many) {
-                pieces.push(Piece::Object(field.none.bind(py).clone().into_any()));
+                pieces.push(Piece::Object(field.none.bind(py).clone()));
                 continue;
             }
             match (&field.out, &field.write) {
                 (Out::Many, Some(write)) => {
                     for text in write.bind(py).call1((value,))?.try_iter()? {
-                        pieces.push(Piece::Object(text?));
+                        pieces.push(Piece::Object(as_text(text?)?));
                     }
                 }
-                (Out::Codec, Some(write)) => pieces.push(Piece::Object(
-                    write
+                (Out::Codec, Some(write)) => {
+                    let text = write
                         .bind(py)
                         .call1((value,))
-                        .map_err(|error| field.unwritable(py, error))?,
-                )),
+                        .map_err(|error| field.unwritable(py, error))?;
+                    pieces.push(Piece::Object(as_text(text)?));
+                }
                 _ => pieces.push(
                     self.native(py, &value)
                         .map_err(|error| field.unwritable(py, error))?,
                 ),
             }
         }
-        if let Some((name, check)) = &self.extra {
+        if let Some(name) = &self.extra {
             let extra = record.getattr(name.bind(py))?;
-            for text in check.bind(py).call1((extra,))?.try_iter()? {
-                pieces.push(Piece::Object(text?));
+            for text in extra.try_iter()? {
+                let text = text?;
+                if !text.is_exact_instance_of::<PyString>() {
+                    return Err(PyValueError::new_err(format!(
+                        "The ExtraColumns field '{}' of {} must hold text, but holds {}!",
+                        name.bind(py),
+                        self.record_name,
+                        extra.repr()?
+                    )));
+                }
+                pieces.push(Piece::Object(text.cast_into::<PyString>()?));
             }
         }
         Ok(pieces)
@@ -262,7 +259,7 @@ impl RecordFormatter {
     /// and booleans as JSON, and any other value as its JSON text, or the string it encodes to.
     fn native<'py>(&self, py: Python<'py>, value: &Bound<'py, PyAny>) -> PyResult<Piece<'py>> {
         if value.is_exact_instance_of::<PyString>() {
-            return Ok(Piece::Object(value.clone()));
+            return Ok(Piece::Object(value.clone().cast_into::<PyString>()?));
         }
         if value.is_exact_instance_of::<PyBool>() {
             return Ok(Piece::Static(if value.is_truthy()? {
@@ -274,7 +271,7 @@ impl RecordFormatter {
         if value.is_exact_instance_of::<PyInt>() {
             return Ok(match value.extract::<i64>() {
                 Ok(number) => Piece::Owned(itoa::Buffer::new().format(number).to_string()),
-                Err(_) => Piece::Object(value.str()?.into_any()),
+                Err(_) => Piece::Object(value.str()?),
             });
         }
         if value.is_exact_instance_of::<PyFloat>() {
@@ -282,7 +279,7 @@ impl RecordFormatter {
             return Ok(if number.is_finite() {
                 Piece::Owned(json_float(number))
             } else {
-                Piece::Object(value.repr()?.into_any())
+                Piece::Object(value.repr()?)
             });
         }
         let json = self.encode.bind(py).call1((value,))?;
@@ -291,30 +288,78 @@ impl RecordFormatter {
             .ok_or_else(|| PyValueError::new_err("The JSON of the value is not valid UTF-8!"))
     }
 
-    /// Joins texts into a line when the csv module would write them as they are, else None.
-    fn line(&self, pieces: &[Piece<'_>]) -> Option<String> {
-        let mut line = String::new();
+    /// Appends texts as one line, quoted as the csv module quotes them: a text holding the
+    /// delimiter, a quote, or a line break, a record of one empty text, and every text of a row
+    /// whose first text starts with a comment prefix, which would otherwise read back as one.
+    ///
+    /// Without quoting, a row that would need any of this is refused instead.
+    fn join(&self, py: Python<'_>, pieces: &[Piece<'_>], line: &mut String) -> PyResult<()> {
+        let first = pieces.first().map(Piece::text).transpose()?;
+        let like_comment = first.is_some_and(|text| {
+            self.comment_prefixes
+                .iter()
+                .any(|prefix| text.starts_with(prefix.as_str()))
+        });
+        let lone_empty = pieces.len() == 1 && first == Some("");
         for (index, piece) in pieces.iter().enumerate() {
             let text = piece.text()?;
-            if text.contains([self.delimiter, '"', '\n', '\r'])
-                || (index == 0
-                    && self
-                        .comment_prefixes
-                        .iter()
-                        .any(|prefix| text.starts_with(prefix.as_str())))
-            {
-                return None;
+            let breaks = text.contains([self.delimiter, '\n', '\r']);
+            if breaks && !self.quoting {
+                let reason = "its text holds the delimiter or a line break";
+                return Err(self.unquotable(py, index, reason, Some(text)));
             }
             if index > 0 {
                 line.push(self.delimiter);
             }
-            line.push_str(text);
+            if self.quoting && (breaks || like_comment || lone_empty || text.contains('"')) {
+                line.push('"');
+                for character in text.chars() {
+                    if character == '"' {
+                        line.push('"');
+                    }
+                    line.push(character);
+                }
+                line.push('"');
+            } else {
+                line.push_str(text);
+            }
         }
-        if line.is_empty() {
-            return None;
+        if lone_empty && !self.quoting {
+            let reason = "a record of one empty field must be quoted";
+            return Err(self.unquotable(py, 0, reason, None));
+        }
+        if like_comment && !self.quoting {
+            let reason = "its text starts with a comment prefix";
+            return Err(self.unquotable(py, 0, reason, first));
         }
         line.push_str(&self.line_end);
-        Some(line)
+        Ok(())
+    }
+
+    /// Explains that the text at an index of a row cannot be written without quoting.
+    fn unquotable(&self, py: Python<'_>, index: usize, reason: &str, text: Option<&str>) -> PyErr {
+        let label = match (self.labels.get(index), &self.extra) {
+            (Some(label), _) => label.clone(),
+            (None, Some(name)) => format!("field '{}'", name.bind(py)),
+            (None, None) => String::new(),
+        };
+        let shown = text
+            .and_then(|text| PyString::new(py, text).repr().ok())
+            .map(|text| format!(": {text}"))
+            .unwrap_or_default();
+        PyValueError::new_err(format!(
+            "Cannot write {label} of {} without quoting, because {reason}{shown}!",
+            self.record_name
+        ))
+    }
+}
+
+/// Returns a value as text: a string as it is, and anything else as `str` writes it.
+fn as_text(value: Bound<'_, PyAny>) -> PyResult<Bound<'_, PyString>> {
+    if value.is_exact_instance_of::<PyString>() {
+        value.cast_into::<PyString>().map_err(Into::into)
+    } else {
+        value.str()
     }
 }
 

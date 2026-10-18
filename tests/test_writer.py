@@ -376,22 +376,23 @@ def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
     assert handle.getvalue() == expected.getvalue()
 
 
-def test_writer_writes_what_a_codec_returns_that_is_not_text() -> None:
-    """Test that a codec returning something other than text is written as the csv module would."""
+@pytest.mark.parametrize(("value", "text"), [(3, "3"), (None, "None"), ([1, 2], "[1, 2]")])
+def test_writer_writes_what_a_codec_returns_that_is_not_text(value: object, text: str) -> None:
+    """Test that a codec returning something other than text is written as `str` writes it."""
 
     @dataclass
     class Count:
         name: str
         value: int
 
-    def as_is(value: Any) -> Any:
+    def as_is(_: Any) -> Any:
         return value
 
     codec: FieldCodec[int] = FieldCodec(from_text=int, into_text=as_is)
     handle = StringIO()
     TsvWriter[Count](handle, codecs={int: codec}).write(Count("x", 3))
 
-    assert handle.getvalue() == f"x\t3{linesep}"
+    assert handle.getvalue() == f"x\t{text}{linesep}"
 
 
 class Shade(Enum):

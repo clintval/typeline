@@ -1,4 +1,3 @@
-import csv
 import re
 from collections.abc import Iterable
 from collections.abc import Mapping
@@ -37,7 +36,6 @@ from ._files import open_for_writing
 from ._native import RecordFormatter
 from .codecs import NO_CODECS
 from .codecs import Codecs
-from .codecs import FieldCodec
 
 DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 """The default prefixes of comment lines a writer writes."""
@@ -113,10 +111,6 @@ class DelimitedDataWriter(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
-        self._record_type: type[RecordType] = record_type
-        self._none_field: str = none_field
-        self._enc_hook: Callable[[Any], Any] | None = enc_hook
-        self._quoting: bool = quoting
         if isinstance(comment_prefixes, str):
             raise TypeError(
                 "comment_prefixes must be a collection of strings,"
@@ -128,53 +122,46 @@ class DelimitedDataWriter(
         self._writes_header: bool = header
         self._header_pending: bool = header
 
-        # Inspect the record type and save the fields and field names.
-        self._field_type_map: dict[str, Any] = field_types(record_type)
-        self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
-        self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
-        self._column_of: dict[str, str] = name_columns(
-            record_type, self._field_type_map, self._extra_field, self._counters, rename
-        )
+        # Inspect the record type, and decide once how each field is written into its text.
+        field_type_map = field_types(record_type)
+        extra_field = extra_columns_field(record_type, field_type_map)
+        counters = CounterFields(record_type, field_type_map)
+        column_of = name_columns(record_type, field_type_map, extra_field, counters, rename)
         layout: list[tuple[str, str]] = [
             (name, column)
-            for name in self._field_type_map
-            if name != self._extra_field
-            for column in self._counters.columns_of(name, self._column_of)
+            for name in field_type_map
+            if name != extra_field
+            for column in counters.columns_of(name, column_of)
         ]
         self._header: tuple[str, ...] = tuple(column for _, column in layout)
-        self._header_fields: tuple[str, ...] = tuple(name for name, _ in layout)
-        self._field_codecs: list[tuple[str, FieldCodec[Any] | None, bool]] = [
-            (name, find_codec(field_type, codecs), name in self._counters)
-            for name, field_type in self._field_type_map.items()
-            if name != self._extra_field
-        ]
-
-        # Build the delimited writer which will use platform-dependent newlines.
-        self._writer: Any = csv.writer(
-            handle,
-            delimiter=self.delimiter,
-            lineterminator=linesep,
-            quotechar='"' if quoting else None,
-            quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
-        )
-        self._quoting_writer: Any = csv.writer(
-            handle, delimiter=self.delimiter, lineterminator=linesep, quoting=csv.QUOTE_ALL
-        )
-        if header and not quoting:
-            self._refuse_unquotable(self._header)
-
-        # Write each record natively as its line, or as its texts when the line needs quoting.
+        fields: list[tuple[str, str, str, Callable[[Any], Any] | None, str]] = []
+        for name, field_type in field_type_map.items():
+            if name == extra_field:
+                continue
+            if name in counters:
+                fields.append((name, "many", "", partial(counters.write, name), ""))
+                continue
+            codec = find_codec(field_type, codecs)
+            none = codec.missing if codec is not None and codec.missing is not None else none_field
+            where = in_column(name, column_of[name])
+            unwritable = f"Could not write field '{name}' of type {type_name(field_type)}{where}!"
+            if codec is None:
+                fields.append((name, "value", none, None, unwritable))
+            else:
+                fields.append((name, "codec", none, codec.into_text, unwritable))
         self._formatter: RecordFormatter = RecordFormatter(
-            [
-                self._field_output(name, codec, is_counter)
-                for name, codec, is_counter in self._field_codecs
-            ],
-            None if self._extra_field is None else (self._extra_field, self._extra_texts),
+            record_type,
+            fields,
+            extra_field,
             JSONEncoder(enc_hook=enc_hook).encode,
             self.delimiter,
             linesep,
             list(self._comment_prefixes),
+            quoting,
+            [f"field '{name}'{in_column(name, column)}" for name, column in layout],
         )
+        if header and not quoting:
+            _ = self._formatter.line(self._header)
 
     @override
     def __enter__(self) -> Self:
@@ -193,94 +180,17 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _field_output(
-        self, name: str, codec: FieldCodec[Any] | None, is_counter: bool
-    ) -> tuple[str, str, str, Callable[[Any], Any] | None, str]:
-        """Decide how the native engine writes a field, its text for None, and its errors."""
-        if is_counter:
-            return (name, "many", "", partial(self._counters.write, name), "")
-        none = (
-            codec.missing if codec is not None and codec.missing is not None else self._none_field
-        )
-        field_type = type_name(self._field_type_map[name])
-        where = in_column(name, self._column_of[name])
-        unwritable = f"Could not write field '{name}' of type {field_type}{where}!"
-        if codec is None:
-            return (name, "value", none, None, unwritable)
-        return (name, "codec", none, codec.into_text, unwritable)
-
-    def _extra_texts(self, extra: Any) -> Any:
-        """Return the texts of the ExtraColumns field, which must all be text."""
-        if not all(type(text) is str for text in extra):
-            raise ValueError(
-                f"The ExtraColumns field '{self._extra_field}' of"
-                + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
-            )
-        return extra
-
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.
 
         Each field is written as the `none_field` when None, or with the codec for its type. Other
-        values are converted to builtin types, then written as-is when a string, or else as JSON.
+        values are written as-is when a string, or else as JSON, or the string their JSON holds.
         With `header=True`, the header is written first if it has not been written yet.
         """
-        if not isinstance(record, self._record_type):
-            raise ValueError(
-                f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
-            )
         line = self._formatter.format(record)
-        if isinstance(line, str):
-            if self._header_pending:
-                self.write_header()
-            _ = self._handle.write(line)
-            return
-        row = line
-        if not self._quoting:
-            self._refuse_unquotable(row)
         if self._header_pending:
             self.write_header()
-        self._write_row(row)
-
-    def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
-        """Write a row, quoting it whole when its first field would read as a comment."""
-        if not self._quoting:
-            self._refuse_unquotable(row)
-            self._writer.writerow(row)
-        elif row and row[0].startswith(self._comment_prefixes):
-            self._quoting_writer.writerow(row)
-        else:
-            self._writer.writerow(row)
-
-    def _refuse_unquotable(self, row: list[str] | tuple[str, ...]) -> None:
-        """Refuse a row that cannot be written without quoting."""
-        like_comment = bool(row) and row[0].startswith(self._comment_prefixes)
-        if like_comment or list(row) == [""] or any(map(self._needs_quoting, row)):
-            raise self._unquotable(row)
-
-    def _needs_quoting(self, text: str) -> bool:
-        """Return whether text holds the delimiter or a line break, and so must be quoted."""
-        return self.delimiter in text or "\n" in text or "\r" in text
-
-    def _unquotable(self, row: list[str] | tuple[str, ...]) -> ValueError:
-        """Explain which field of a row cannot be written without quoting."""
-        index, reason = next(
-            (
-                (index, f"its text holds the delimiter or a line break: {text!r}")
-                for index, text in enumerate(row)
-                if self._needs_quoting(text)
-            ),
-            (0, "a record of one empty field must be quoted")
-            if list(row) == [""]
-            else (0, f"its text starts with a comment prefix: {row[0]!r}"),
-        )
-        named = index < len(self._header)
-        name = self._header_fields[index] if named else self._extra_field
-        where = in_column(self._header_fields[index], self._header[index]) if named else ""
-        return ValueError(
-            f"Cannot write field '{name}'{where} of {self._record_type.__name__} without quoting,"
-            + f" because {reason}!"
-        )
+        _ = self._handle.write(line)
 
     def write_all(self, records: Iterable[RecordType]) -> None:
         """Write every record in order, after the header when `header=True`.
@@ -293,7 +203,7 @@ class DelimitedDataWriter(
             for record in records:
                 self.write(record)
             return
-        self._formatter.write_all(records, self._record_type, self._handle.write, self.write)
+        self._formatter.write_all(records, self._handle.write)
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object.
@@ -304,7 +214,7 @@ class DelimitedDataWriter(
         if self._writes_header and not self._header_pending:
             return
         self._header_pending = False
-        self._write_row(self._header)
+        _ = self._handle.write(self._formatter.line(self._header))
 
     def write_comment(self, comment: str | Comment) -> None:
         """Write a comment, e.g. one a reader sent to `on_comment`.
