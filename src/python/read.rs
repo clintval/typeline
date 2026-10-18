@@ -10,8 +10,10 @@ use pyo3::types::{
     PyTime, PyTuple, PyType, PyTzInfo,
 };
 
+use std::convert::Infallible;
+
 use crate::dates::{self, Zone};
-use crate::rows::{CHUNK, Event, Options, Rows, Source};
+use crate::rows::{CHUNK, Event, Options, Rows, Source, ends_in_quotes};
 use crate::text::{json_string, looks_like_json, on_line, plain_float, plain_int};
 
 /// How a field is read from the text of its column.
@@ -668,6 +670,23 @@ impl Source for Stream {
     }
 }
 
+/// Text given all at once, e.g. a line to decode.
+struct Text<'a>(Option<&'a str>);
+
+impl Source for Text<'_> {
+    type Error = Infallible;
+
+    fn read(&mut self, text: &mut String) -> Result<bool, Infallible> {
+        match self.0.take() {
+            Some(given) => {
+                text.push_str(given);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
 /// Reads records natively from a Python text stream, one row at a time.
 ///
 /// Comments between rows are handed to `on_comment` as they are reached. Once the stream is read
@@ -746,6 +765,44 @@ impl RowReader {
     /// Build records with a builder.
     fn bind(&mut self, builder: Py<RecordBuilder>) {
         self.builder = Some(builder);
+    }
+
+    /// Decode one record from a line of text, as this reader reads records, reading nothing from
+    /// its stream.
+    ///
+    /// The line may end with a line break, and a quoted field may hold line breaks. Blank text,
+    /// a comment, text holding more than one record, and text ending inside a quoted field are
+    /// refused.
+    fn decode<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+        let Some(builder) = &self.builder else {
+            return Err(PyValueError::new_err("No record type to build records of!"));
+        };
+        let builder = builder.get();
+        let refuse = |before: &str, after: &str| {
+            PyString::new(py, text).repr().map(|shown| {
+                PyValueError::new_err(format!(
+                    "Could not decode {} from {before}{shown}{after}!",
+                    builder.record_name
+                ))
+            })
+        };
+        let options = self.rows.options();
+        let mut rows = Rows::new(Text(Some(text)), options.clone());
+        let Ok(first) = rows.read();
+        let row: Vec<String> = match first {
+            None => return Err(refuse("blank line ", "")?),
+            Some(Event::Comment { .. }) => return Err(refuse("comment line ", "")?),
+            Some(Event::Row { row, .. }) => row.iter().map(str::to_string).collect(),
+        };
+        let Ok(next) = rows.read();
+        if next.is_some() {
+            return Err(refuse("", ", which holds more than one record")?);
+        }
+        if options.quoting && ends_in_quotes(text, options.delimiter) {
+            return Err(refuse("", ", which ends inside a quoted field")?);
+        }
+        let cells: Vec<&str> = row.iter().map(String::as_str).collect();
+        builder.build_cells(py, &cells, None)
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

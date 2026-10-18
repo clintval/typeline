@@ -191,17 +191,24 @@ def test_decode_reads_a_line_with_a_prefix_that_is_not_a_comment_prefix() -> Non
         pytest.param("a,b\r\nc,d", id="two-records-crlf"),
         pytest.param("a,b\rc,d", id="two-records-cr"),
         pytest.param('a,"b"\nc,d', id="after-a-quoted-field"),
-        pytest.param("a,b\n\n", id="trailing-blank-line"),
-        pytest.param("\na,b\n", id="leading-blank-line"),
+        pytest.param("a,b\n# c\n", id="followed-by-a-comment"),
     ],
 )
 def test_decode_refuses_text_holding_more_than_one_record(line: str) -> None:
-    """Test that decode refuses text holding more than one record, counting a blank line as one."""
+    """Test that decode refuses text holding more than one record, or a record and a comment."""
     reader = CsvReader[Note](StringIO(), header=False)
 
     message = r"^Could not decode Note from .*, which holds more than one record!$"
     with pytest.raises(ValueError, match=message):
         _ = reader.decode(line)
+
+
+@pytest.mark.parametrize("line", ["a,b\n\n", "\na,b\n", " \n\na,b\r\n\t\n"])
+def test_decode_skips_blank_lines_around_a_record(line: str) -> None:
+    """Test that decode skips blank lines before and after a record, as a reader skips them."""
+    reader = CsvReader[Note](StringIO(), header=False)
+
+    assert reader.decode(line) == Note("a", "b")
 
 
 def test_decode_keeps_line_breaks_that_do_not_end_a_line() -> None:

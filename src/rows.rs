@@ -69,6 +69,7 @@ impl<'a> Row<'a> {
 }
 
 /// How rows are written in the text.
+#[derive(Clone)]
 pub struct Options {
     /// The ASCII byte between fields.
     pub delimiter: u8,
@@ -129,6 +130,11 @@ impl<S: Source> Rows<S> {
     /// The source of text.
     pub fn source(&self) -> &S {
         &self.source
+    }
+
+    /// How rows are written in the text.
+    pub fn options(&self) -> &Options {
+        &self.options
     }
 
     /// Reads the next comment or row, or None at the end of the text.
@@ -284,6 +290,34 @@ impl<S: Source> Rows<S> {
     }
 }
 
+/// Where text stands in the quoting of its fields.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quotes {
+    /// At the start of a field, where a quote opens a quoted field.
+    FieldStart,
+    /// In a field that is not quoted, where a quote is text.
+    Unquoted,
+    /// In a quoted field, which a quote closes.
+    Quoted,
+    /// Just after a quote closed a quoted field, where another quote reopens it as text.
+    Closed,
+}
+
+/// Returns whether text, read as rows, ends inside a quoted field that nothing closes.
+pub fn ends_in_quotes(text: &str, delimiter: u8) -> bool {
+    let mut quotes = Quotes::FieldStart;
+    for &byte in text.trim_start_matches('\u{feff}').as_bytes() {
+        quotes = match (quotes, byte) {
+            (Quotes::Quoted, b'"') => Quotes::Closed,
+            (Quotes::Quoted, _) | (Quotes::FieldStart | Quotes::Closed, b'"') => Quotes::Quoted,
+            (_, b'\r' | b'\n') => Quotes::FieldStart,
+            (_, byte) if byte == delimiter => Quotes::FieldStart,
+            _ => Quotes::Unquoted,
+        };
+    }
+    quotes == Quotes::Quoted
+}
+
 /// Returns whether an ASCII byte is whitespace to Python's `str.isspace`.
 fn is_ascii_python_space(byte: u8) -> bool {
     matches!(byte, b'\t'..=b'\r' | 0x1c..=b' ')
@@ -398,6 +432,30 @@ mod tests {
             events("\"a\tb\"\n", 1000, false),
             vec![row(1, &["\"a", "b\""])]
         );
+    }
+
+    #[test]
+    fn ends_in_quotes_tracks_quotes_as_rows_read_them() {
+        for text in [
+            "a\t\"b",
+            "a\t\"b\nc\td\n",
+            "\"a\"\"",
+            "\"a\"\"b\"\"\"\"",
+            "\u{feff}\"a",
+        ] {
+            assert!(ends_in_quotes(text, b'\t'), "{text:?}");
+        }
+        for text in [
+            "",
+            "a\tb\n",
+            "\"a\"\tb",
+            "a\"b\n",
+            "\"a\"\"b\"\n",
+            "\"a\"c\"\n",
+            "a\"\n",
+        ] {
+            assert!(!ends_in_quotes(text, b'\t'), "{text:?}");
+        }
     }
 
     #[test]

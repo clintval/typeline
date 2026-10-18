@@ -1,4 +1,3 @@
-import csv
 from collections import Counter
 from collections.abc import Collection
 from collections.abc import Iterable
@@ -13,7 +12,6 @@ from enum import Enum
 from enum import Flag
 from inspect import Parameter
 from inspect import signature
-from io import StringIO
 from pathlib import Path
 from types import NoneType
 from types import TracebackType
@@ -154,13 +152,11 @@ class DelimitedDataReader(
         self._handle: TextIO = handle
         name = getattr(handle, "name", None)
         self._file_name: str | None = name if isinstance(name, str) else None
-        self._record_type: type[RecordType] = record_type
         if isinstance(comment_prefixes, str):
             raise TypeError(
                 "comment_prefixes must be a collection of strings,"
                 + f" not the string {comment_prefixes!r}!"
             )
-        self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
 
@@ -179,16 +175,11 @@ class DelimitedDataReader(
         ]
 
         # Read rows natively, skipping blank and comment lines between records.
-        self._dialect: dict[str, Any] = {
-            "delimiter": self.delimiter,
-            "quotechar": '"' if quoting else None,
-            "quoting": csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
-        }
         self._rows: RowReader = RowReader(
             handle,
             self.delimiter,
             quoting,
-            list(self._comment_prefixes),
+            list(comment_prefixes),
             None if on_comment is None else lambda line, text: on_comment(Comment(line, text)),
         )
 
@@ -220,7 +211,7 @@ class DelimitedDataReader(
                 )
         layout: list[str] = expected if found is None else found
         index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
-        self._builder: RecordBuilder = RecordBuilder(
+        builder = RecordBuilder(
             record_type,
             [
                 self._field_spec(name, index_of[column], codecs)
@@ -237,7 +228,7 @@ class DelimitedDataReader(
             self._counters.locate(layout),
             self._file_name,
         )
-        self._rows.bind(self._builder)
+        self._rows.bind(builder)
 
     @override
     def __enter__(self) -> Self:
@@ -301,24 +292,7 @@ class DelimitedDataReader(
             ValueError: if the line is blank, is a comment, holds more than one record, or ends
                 inside a quoted field, or if its fields cannot be read into a record.
         """
-        name = self._record_type.__name__
-        if self.delimiter not in line and not line.strip():
-            raise ValueError(f"Could not decode {name} from blank line {line!r}!")
-        if line.startswith(self._comment_prefixes):
-            raise ValueError(f"Could not decode {name} from comment line {line!r}!")
-        lines = StringIO(line, newline="").readlines()
-        # The empty last line is read only when the text ends inside a quoted field.
-        rows = csv.reader([*lines, ""], **self._dialect)
-        row = next(rows)
-        if rows.line_num > len(lines):
-            raise ValueError(
-                f"Could not decode {name} from {line!r}, which ends inside a quoted field!"
-            )
-        if rows.line_num < len(lines):
-            raise ValueError(
-                f"Could not decode {name} from {line!r}, which holds more than one record!"
-            )
-        return cast(RecordType, self._builder.build(row, None))
+        return cast(RecordType, self._rows.decode(line))
 
     def close(self) -> None:
         """Close all opened resources."""

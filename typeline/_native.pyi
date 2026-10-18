@@ -60,5 +60,7 @@ class RowReader:
         """Read the next row, e.g. a header, as its fields and the line it starts on."""
     def bind(self, builder: RecordBuilder) -> None:
         """Build records with a builder."""
+    def decode(self, text: str) -> Any:
+        """Decode one record from a line of text, reading nothing from the stream."""
     def __iter__(self) -> Self: ...
     def __next__(self) -> Any: ...
