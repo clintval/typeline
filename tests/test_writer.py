@@ -210,15 +210,32 @@ def test_writer_refuses_text_it_cannot_write_without_quoting(text: str) -> None:
     assert stream.getvalue() == ""
 
 
-def test_writer_refuses_a_lone_empty_field_without_quoting() -> None:
-    """Test that without quoting a record of one empty field, which must be quoted, is refused."""
+@pytest.mark.parametrize("text", ["", " ", "\x0c", "\u3000"])
+def test_writer_refuses_a_lone_blank_field_without_quoting(text: str) -> None:
+    """Test that without quoting a record of one blank field, which must be quoted, is refused."""
 
     @dataclass
     class Name:
         name: str
 
-    with pytest.raises(ValueError, match="field 'name' of Name .* one empty field"):
-        TsvWriter[Name](StringIO(), quoting=False).write(Name(""))
+    with pytest.raises(ValueError, match="field 'name' of Name .* one blank field"):
+        TsvWriter[Name](StringIO(), quoting=False).write(Name(text))
+
+
+@pytest.mark.parametrize("text", ["", " ", "\x0c", "\u3000"])
+def test_writer_quotes_a_lone_blank_field_so_it_reads_back(text: str) -> None:
+    """Test that a record of one blank field is quoted, which a reader would else skip as blank."""
+
+    @dataclass
+    class Name:
+        name: str
+
+    handle = StringIO()
+    TsvWriter[Name](handle).write(Name(text))
+
+    assert handle.getvalue() == f'"{text}"{linesep}'
+    with TsvReader[Name](StringIO(handle.getvalue()), header=False) as reader:
+        assert list(reader) == [Name(text)]
 
 
 def test_writer_writes_the_delimiter_of_another_format_without_quoting(tmp_path: Path) -> None:
@@ -345,7 +362,10 @@ TRICKY: list[str] = ["", "a", "b c", ",", "\t", "|", '"', "'", "\n", "\r", "#", 
 
 @pytest.mark.parametrize("kind", [CsvWriter, TsvWriter])
 def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
-    """Test that rows are written byte for byte as the csv module writes them, quoted or not."""
+    """Test that rows are written byte for byte as the csv module writes them, quoted or not.
+
+    Only a row that would read back as a comment or a blank line is quoted entirely instead.
+    """
     rng = random.Random(42)
 
     def text() -> str:
@@ -363,7 +383,8 @@ def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
     )
     rows = [[record.first, record.second, *record.extra] for record in records]
     for row in [*rows, *([record.text] for record in lone)]:
-        (every if row[0].startswith("#") else minimal).writerow(row)
+        blank = len(row) == 1 and row[0].isspace()
+        (every if row[0].startswith("#") or blank else minimal).writerow(row)
 
     handle = StringIO()
     texts_writer = kind[Texts](handle)

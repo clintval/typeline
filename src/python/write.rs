@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
 
 use crate::rows::CHUNK;
-use crate::text::json_float;
+use crate::text::{is_python_space, json_float};
 
 /// How a field of a record is written into text.
 enum Out {
@@ -355,8 +355,9 @@ impl RecordFormatter {
     }
 
     /// Appends texts as one line, quoted as the csv module quotes them: a text holding the
-    /// delimiter, a quote, or a line break, a record of one empty text, and every text of a row
-    /// whose first text starts with a comment prefix, which would otherwise read back as one.
+    /// delimiter, a quote, or a line break, a record of one text that is empty or only whitespace,
+    /// which would otherwise read back as a blank line, and every text of a row whose first text
+    /// starts with a comment prefix, which would otherwise read back as a comment.
     ///
     /// Without quoting, a row that would need any of this is refused instead.
     fn join(&self, py: Python<'_>, pieces: &[Piece<'_>], line: &mut String) -> PyResult<()> {
@@ -366,7 +367,8 @@ impl RecordFormatter {
                 .iter()
                 .any(|prefix| text.starts_with(prefix.as_str()))
         });
-        let lone_empty = pieces.len() == 1 && first == Some("");
+        let lone_blank =
+            pieces.len() == 1 && first.is_some_and(|text| text.chars().all(is_python_space));
         for (index, piece) in pieces.iter().enumerate() {
             let text = piece.text()?;
             let breaks = text.contains([self.delimiter, '\n', '\r']);
@@ -377,7 +379,7 @@ impl RecordFormatter {
             if index > 0 {
                 line.push(self.delimiter);
             }
-            if self.quoting && (breaks || like_comment || lone_empty || text.contains('"')) {
+            if self.quoting && (breaks || like_comment || lone_blank || text.contains('"')) {
                 line.push('"');
                 for character in text.chars() {
                     if character == '"' {
@@ -390,9 +392,10 @@ impl RecordFormatter {
                 line.push_str(text);
             }
         }
-        if lone_empty && !self.quoting {
-            let reason = "a record of one empty field must be quoted";
-            return Err(self.unquotable(py, 0, reason, None));
+        if lone_blank && !self.quoting {
+            let reason = "a record of one blank field, which would read as a blank line, must be \
+                          quoted";
+            return Err(self.unquotable(py, 0, reason, first));
         }
         if like_comment && !self.quoting {
             let reason = "its text starts with a comment prefix";
