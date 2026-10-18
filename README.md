@@ -251,7 +251,7 @@ with TsvReader.from_path[Region](path, header=False, quoting=False) as reader:
 
 ### Custom Field Formats
 
-`str`, `int`, `float`, and `bool` fields are written as their usual text, and read back strictly, so `12.0` is not an `int` and `True` is not a `bool`.
+`str` fields are written as they are, `int` and `float` fields as JSON numbers, and `bool` fields as `true` and `false`, and each reads back only such text, so `12.0` is not an `int` and `True` is not a `bool`.
 A union of plain types, like `int | str`, reads its text as the first of `bool`, `int`, `float`, and `str` that fits.
 Dates, times, UUIDs, decimals, enums, and literals are written as their usual text too, and lists, tuples, sets, dicts, and nested dataclasses as JSON.
 For any other text format, a `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
