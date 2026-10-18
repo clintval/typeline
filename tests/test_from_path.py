@@ -208,6 +208,30 @@ def test_reader_from_a_path_closes_its_file_when_a_record_fails(
     assert all(handle.closed for handle in opened)
 
 
+def test_reader_from_a_path_raises_the_error_of_a_record_over_one_closing_its_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that when a record and then closing the file both fail, the record's error is raised."""
+    _ = (tmp_path / "bad.tsv").write_text("name\treads\ntumor\t1200\nnormal\tmany\n")
+    _ = (tmp_path / "good.tsv").write_text(TEXT)
+    unclosed: list[Any] = []
+
+    def refuse(handle: Any) -> None:
+        unclosed.append(handle)
+        raise OSError("cannot close")
+
+    monkeypatch.setattr("typeline._files._TextFile.close", refuse)
+
+    with pytest.raises(ValueError, match=r"^Could not read field 'reads' .* from text 'many'"):
+        _ = list(TsvReader.from_path[Sample](tmp_path / "bad.tsv"))
+    with pytest.raises(OSError, match=r"^cannot close$"):
+        _ = list(TsvReader.from_path[Sample](tmp_path / "good.tsv"))
+
+    monkeypatch.undo()
+    for handle in unclosed:
+        handle.close()
+
+
 @pytest.mark.parametrize("compress", [bytes, gzip.compress, bz2.compress, lzma.compress])
 def test_from_path_reads_an_empty_file(tmp_path: Path, compress: Callable[[bytes], bytes]) -> None:
     """Test that an empty file, compressed or not, has no records."""

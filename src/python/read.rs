@@ -820,13 +820,15 @@ impl RowReader {
             return Ok(None);
         }
         let next = self.next_record(py);
-        if !matches!(next, Ok(Some(_))) {
-            self.done = true;
-            if self.close_when_read {
-                self.rows.source().handle.bind(py).call_method0("close")?;
-            }
+        if matches!(next, Ok(Some(_))) {
+            return next;
         }
-        next
+        self.done = true;
+        if !self.close_when_read {
+            return next;
+        }
+        let closed = self.rows.source().handle.bind(py).call_method0("close");
+        next.and_then(|record| closed.map(|_| record))
     }
 }
 
