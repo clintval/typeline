@@ -426,24 +426,34 @@ def lookup_table(kind: Any) -> dict[str, Any] | None:
 def init_fields(record_type: type[Any], names: list[str]) -> list[str] | None:
     """Return the fields passed by keyword to a record type's `__init__`, or None to skip it.
 
-    A dataclass's generated `__init__` is compiled from a string, unlike one written in a module,
-    and only sets the fields it takes, unless it takes a parameter that is not a field, e.g. an
-    `InitVar`, which it hands on to `__post_init__`. A record of a type that uses it, and that
-    `object.__new__` allocates, is built as calling the type would build it, with its fields set
-    directly. Any other type is called, so its own `__new__`, e.g. `BaseException.__new__`, runs
-    first. A field that `__init__` does not take, e.g. one with `init=False`, is set once the
-    record is built.
+    A dataclass's generated `__init__` only sets the fields it takes, unless it takes a parameter
+    that is not a field, e.g. an `InitVar`, which it hands on to `__post_init__`. A record of a
+    type that uses it, that `object.__new__` allocates, and whose fields are set as
+    `object.__setattr__` sets them, is built as calling the type would build it, with its fields
+    set directly. Any other type is called, so its own `__new__`, e.g. `BaseException.__new__`,
+    runs first, and its own `__setattr__` sees each field. A field that `__init__` does not take,
+    e.g. one with `init=False`, is set once the record is built.
     """
     init = record_type.__init__
     parameters = dict(islice(signature(init).parameters.items(), 1, None))
-    code = getattr(init, "__code__", None)
     own_new = any("__new__" in vars(base) for base in record_type.__mro__ if base is not object)
+    setattr_: Any = record_type.__setattr__
     if (
-        code is not None
-        and code.co_filename == "<string>"
+        generated(init)
         and set(parameters) <= set(names)
         and not own_new
+        and (setattr_ is object.__setattr__ or generated(setattr_))
         and not isabstract(record_type)
     ):
         return None
     return [name for name in names if name in parameters and parameters[name].kind in BY_KEYWORD]
+
+
+def generated(method: Any) -> bool:
+    """Return whether a dataclass generated a method, which it compiles from a string.
+
+    A frozen dataclass's generated `__setattr__` only refuses to set a field, and its generated
+    `__init__` sets each field as `object.__setattr__` does.
+    """
+    code = getattr(method, "__code__", None)
+    return code is not None and code.co_filename == "<string>"

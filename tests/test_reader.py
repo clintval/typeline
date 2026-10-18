@@ -28,6 +28,7 @@ from uuid import UUID
 
 import pytest
 from msgspec import Meta
+from typing_extensions import override
 
 from typeline import CsvReader
 from typeline import CsvWriter
@@ -785,3 +786,17 @@ def test_reader_reads_on_past_an_empty_line_of_an_iterable_inside_a_quoted_field
     reader = TsvReader[Pair](lines, header=False)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
 
     assert list(reader) == [Pair("a\nb", "x")]
+
+
+def test_reader_builds_a_record_with_its_own_setattr_through_its_init() -> None:
+    """Test that a record type with its own __setattr__ sees each field it is built with."""
+
+    @dataclass
+    class Tidy:
+        name: str
+
+        @override
+        def __setattr__(self, name: str, value: object) -> None:
+            super().__setattr__(name, value.strip() if isinstance(value, str) else value)
+
+    assert list(TsvReader[Tidy](StringIO("  padded  \n"), header=False)) == [Tidy("padded")]
