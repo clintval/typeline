@@ -295,17 +295,22 @@ impl<S: Source> Rows<S> {
         self.after_cr = span[span.len() - 1] == b'\r';
     }
 
-    /// Reads another chunk of text, first dropping the input already read.
+    /// Reads another chunk of text, first dropping the input already read, and passing over any
+    /// empty chunk a source hands over before its end, which would read as the end of the text.
     fn refill(&mut self) -> Result<(), S::Error> {
         self.input.drain(..self.at);
         self.at = 0;
-        self.chunk.clear();
-        if self.source.read(&mut self.chunk)? {
-            self.input.extend_from_slice(self.chunk.as_bytes());
-        } else {
-            self.exhausted = true;
+        loop {
+            self.chunk.clear();
+            if !self.source.read(&mut self.chunk)? {
+                self.exhausted = true;
+                return Ok(());
+            }
+            if !self.chunk.is_empty() {
+                self.input.extend_from_slice(self.chunk.as_bytes());
+                return Ok(());
+            }
         }
-        Ok(())
     }
 }
 
@@ -363,6 +368,8 @@ mod tests {
     struct Chunks {
         chars: Vec<char>,
         size: usize,
+        gaps: bool,
+        gap: bool,
     }
 
     impl Source for Chunks {
@@ -372,10 +379,47 @@ mod tests {
             if self.chars.is_empty() {
                 return Ok(false);
             }
+            self.gap = !self.gap;
+            if self.gaps && self.gap {
+                return Ok(true);
+            }
             let size = self.size.min(self.chars.len());
             text.extend(self.chars.drain(..size));
             Ok(true)
         }
+    }
+
+    /// Text served as the given pieces, in order, some of which may be empty.
+    struct Pieces(Vec<&'static str>);
+
+    impl Source for Pieces {
+        type Error = Infallible;
+
+        fn read(&mut self, text: &mut String) -> Result<bool, Infallible> {
+            if self.0.is_empty() {
+                return Ok(false);
+            }
+            text.push_str(self.0.remove(0));
+            Ok(true)
+        }
+    }
+
+    #[test]
+    fn rows_read_on_past_an_empty_piece_inside_a_quoted_field() {
+        let options = Options {
+            delimiter: b'\t',
+            quoting: true,
+            comment_prefixes: vec!["#".to_string()],
+        };
+        let mut rows = Rows::new(Pieces(vec!["\"a\n", "", "", "b\"\tx\n"]), options);
+        let Ok(Some(Event::Row { line, row })) = rows.read() else {
+            panic!("expected a row");
+        };
+        assert_eq!(
+            (line, row.iter().collect::<Vec<_>>()),
+            (1, vec!["a\nb", "x"])
+        );
+        assert!(matches!(rows.read(), Ok(None)));
     }
 
     /// Reads every event left in rows of text, as owned values.
@@ -392,9 +436,22 @@ mod tests {
 
     /// Reads every event of a text, served in chunks of a size, as owned values.
     fn events(text: &str, size: usize, quoting: bool) -> Vec<(u64, Result<Vec<String>, String>)> {
+        events_with_gaps(text, size, quoting, false)
+    }
+
+    /// Reads every event of a text, served in chunks of a size, with an empty chunk before each
+    /// chunk of text when there are gaps, as owned values.
+    fn events_with_gaps(
+        text: &str,
+        size: usize,
+        quoting: bool,
+        gaps: bool,
+    ) -> Vec<(u64, Result<Vec<String>, String>)> {
         let source = Chunks {
             chars: text.chars().collect(),
             size,
+            gaps,
+            gap: false,
         };
         let options = Options {
             delimiter: b'\t',
@@ -495,6 +552,8 @@ mod tests {
             Chunks {
                 chars: text.chars().collect(),
                 size: 2,
+                gaps: false,
+                gap: false,
             },
             options,
         );
@@ -524,9 +583,14 @@ mod tests {
         fn rows_are_the_same_in_chunks_of_any_size(
             text in "[a\"\t\r\n# ]{0,40}",
             size in 1usize..8,
+            gaps in any::<bool>(),
         ) {
-            prop_assert_eq!(events(&text, size, true), events(&text, 1 << 20, true));
-            prop_assert_eq!(events(&text, size, false), events(&text, 1 << 20, false));
+            for quoting in [true, false] {
+                prop_assert_eq!(
+                    events_with_gaps(&text, size, quoting, gaps),
+                    events(&text, 1 << 20, quoting)
+                );
+            }
         }
 
         #[test]

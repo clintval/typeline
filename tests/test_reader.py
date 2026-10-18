@@ -771,3 +771,17 @@ def test_reader_reads_a_union_of_plain_types_as_its_first_type_that_fits() -> No
 
     assert [type(value) for value in values] == [bool, int, int, float, float, str, str]
     assert values[:4] == [True, 12, 0, 1.5]
+
+
+def test_reader_reads_on_past_an_empty_line_of_an_iterable_inside_a_quoted_field() -> None:
+    """Test that an empty line from an iterable of lines does not end a quoted field."""
+
+    @dataclass
+    class Pair:
+        text: str
+        other: str
+
+    lines = iter(['"a\n', "", "", 'b"\tx\n'])
+    reader = TsvReader[Pair](lines, header=False)  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
+
+    assert list(reader) == [Pair("a\nb", "x")]
