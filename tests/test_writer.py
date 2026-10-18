@@ -360,6 +360,23 @@ TRICKY: list[str] = ["", "a", "b c", ",", "\t", "|", '"', "'", "\n", "\r", "#", 
 """Pieces of text that the csv module quotes, or that sit next to text it quotes."""
 
 
+def csv_quotes_a_carriage_return() -> bool:
+    """Return whether the csv module quotes a carriage return, which some older Pythons do not."""
+    handle = StringIO()
+    csv.writer(handle, lineterminator=linesep).writerow(["\r"])
+    return handle.getvalue().startswith('"')
+
+
+@pytest.mark.parametrize(("writer", "reader"), [(CsvWriter, CsvReader), (TsvWriter, TsvReader)])
+def test_writer_quotes_a_carriage_return(writer: Any, reader: Any) -> None:
+    """Test that a field holding a carriage return is quoted, so it reads back as text."""
+    handle = StringIO()
+    writer[Lone](handle).write(Lone("a\rb"))
+
+    assert handle.getvalue() == f'"a\rb"{linesep}'
+    assert list(reader[Lone](StringIO(handle.getvalue()), header=False)) == [Lone("a\rb")]
+
+
 @pytest.mark.parametrize("kind", [CsvWriter, TsvWriter])
 def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
     """Test that rows are written byte for byte as the csv module writes them, quoted or not.
@@ -367,14 +384,15 @@ def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
     Only a row that would read back as a comment or a blank line is quoted entirely instead.
     """
     rng = random.Random(42)
+    pieces = [piece for piece in TRICKY if piece != "\r" or csv_quotes_a_carriage_return()]
 
     def text() -> str:
-        return "".join(rng.choices(TRICKY, k=rng.randrange(4)))
+        return "".join(rng.choices(pieces, k=rng.randrange(4)))
 
     records = [
         Texts(text(), text(), tuple(text() for _ in range(rng.randrange(3)))) for _ in range(5000)
     ]
-    lone = [Lone(piece) for piece in TRICKY]
+    lone = [Lone(piece) for piece in pieces]
 
     expected = StringIO()
     minimal = csv.writer(expected, delimiter=kind.delimiter, lineterminator=linesep)
