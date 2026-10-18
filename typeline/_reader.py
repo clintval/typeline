@@ -42,6 +42,7 @@ from ._columns import NO_RENAME
 from ._columns import in_column
 from ._columns import name_columns
 from ._comment import Comment
+from ._comment import comment_prefixes_of
 from ._counter_columns import CounterFields
 from ._data_types import RecordType
 from ._data_types import accepts_none
@@ -155,11 +156,7 @@ class DelimitedDataReader(
         self._handle: TextIO = handle
         name = getattr(handle, "name", None)
         self._file_name: str | None = name if isinstance(name, str) else None
-        if isinstance(comment_prefixes, str):
-            raise TypeError(
-                "comment_prefixes must be a collection of strings,"
-                + f" not the string {comment_prefixes!r}!"
-            )
+        prefixes = comment_prefixes_of(comment_prefixes)
         self._none_field: str = none_field
         self._dec_hook: Callable[[type, Any], Any] | None = dec_hook
 
@@ -182,7 +179,7 @@ class DelimitedDataReader(
             handle,
             self.delimiter,
             quoting,
-            list(comment_prefixes),
+            list(prefixes),
             None if on_comment is None else lambda line, text: on_comment(Comment(line, text)),
         )
 

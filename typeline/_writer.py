@@ -25,6 +25,7 @@ from ._columns import NO_RENAME
 from ._columns import in_column
 from ._columns import name_columns
 from ._comment import Comment
+from ._comment import comment_prefixes_of
 from ._counter_columns import CounterFields
 from ._data_types import RecordType
 from ._data_types import extra_columns_field
@@ -110,14 +111,9 @@ class DelimitedDataWriter(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
-        if isinstance(comment_prefixes, str):
-            raise TypeError(
-                "comment_prefixes must be a collection of strings,"
-                + f" not the string {comment_prefixes!r}!"
-            )
-        if not comment_prefixes:
+        self._comment_prefixes: tuple[str, ...] = comment_prefixes_of(comment_prefixes)
+        if not self._comment_prefixes:
             raise ValueError("comment_prefixes must hold at least one prefix!")
-        self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._writes_header: bool = header
         self._header_pending: bool = header
 
