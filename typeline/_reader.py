@@ -11,7 +11,9 @@ from decimal import Decimal
 from enum import Enum
 from enum import Flag
 from inspect import Parameter
+from inspect import isabstract
 from inspect import signature
+from itertools import islice
 from pathlib import Path
 from types import NoneType
 from types import TracebackType
@@ -429,12 +431,22 @@ def init_fields(record_type: type[Any], names: list[str]) -> list[str] | None:
 
     A dataclass's generated `__init__` is compiled from a string, unlike one written in a module,
     and only sets the fields it takes, unless it takes a parameter that is not a field, e.g. an
-    `InitVar`, which it hands on to `__post_init__`. A record of a type that uses it is built as
-    it would build it, with its fields set directly. A field that `__init__` does not take, e.g.
-    one with `init=False`, is set once the record is built.
+    `InitVar`, which it hands on to `__post_init__`. A record of a type that uses it, and that
+    `object.__new__` allocates, is built as calling the type would build it, with its fields set
+    directly. Any other type is called, so its own `__new__`, e.g. `BaseException.__new__`, runs
+    first. A field that `__init__` does not take, e.g. one with `init=False`, is set once the
+    record is built.
     """
-    parameters = signature(record_type).parameters
-    code = getattr(record_type.__init__, "__code__", None)
-    if code is not None and code.co_filename == "<string>" and set(parameters) <= set(names):
+    init = record_type.__init__
+    parameters = dict(islice(signature(init).parameters.items(), 1, None))
+    code = getattr(init, "__code__", None)
+    own_new = any("__new__" in vars(base) for base in record_type.__mro__ if base is not object)
+    if (
+        code is not None
+        and code.co_filename == "<string>"
+        and set(parameters) <= set(names)
+        and not own_new
+        and not isabstract(record_type)
+    ):
         return None
     return [name for name in names if name in parameters and parameters[name].kind in BY_KEYWORD]

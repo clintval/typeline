@@ -1,4 +1,6 @@
 import csv
+from abc import ABC
+from abc import abstractmethod
 from dataclasses import InitVar
 from dataclasses import dataclass
 from dataclasses import field
@@ -17,6 +19,7 @@ from pathlib import Path
 from re import escape
 from typing import Annotated
 from typing import Any
+from typing import ClassVar
 from typing import Literal
 from typing import NewType
 from typing import Optional  # pyright: ignore[reportDeprecated]
@@ -576,6 +579,48 @@ def test_reader_calls_the_init_a_record_type_defines_itself() -> None:
             self.name = name.upper()
 
     assert list(TsvReader[Shouted](StringIO("quiet\n"), header=False)) == [Shouted("QUIET")]
+
+
+def test_reader_calls_the_new_a_record_type_inherits() -> None:
+    """Test that a record type whose __new__ is not object's, e.g. an exception, is built by it."""
+
+    @dataclass
+    class FailureError(Exception):
+        code: int
+        message: str
+
+    @dataclass
+    class Counted:
+        value: int
+        made: ClassVar[int] = 0
+
+        def __new__(cls, *_args: object, **_kwargs: object) -> "Counted":
+            Counted.made += 1
+            return super().__new__(cls)
+
+    (failure,) = list(TsvReader[FailureError](StringIO("1\tboom\n"), header=False))
+    counted = list(TsvReader[Counted](StringIO("1\n2\n"), header=False))
+
+    assert (failure.code, failure.message, failure.args, str(failure)) == (1, "boom", (), "")
+    assert Counted.made == 2
+    assert counted == [Counted(1), Counted(2)]
+
+
+def test_reader_refuses_to_build_an_abstract_record_type() -> None:
+    """Test that an abstract record type is refused as calling it would refuse it."""
+
+    @dataclass
+    class Shape(ABC):
+        name: str
+
+        @abstractmethod
+        def area(self) -> float: ...
+
+    reader: TsvReader[Any] = cast(Any, TsvReader)[Shape](StringIO("square\n"), header=False)
+    with pytest.raises(TypeError, match=r"^Can't instantiate abstract class Shape") as error:
+        _ = list(reader)
+
+    assert error.value.__notes__ == ["Raised while building Shape on line 1."]
 
 
 def test_reader_builds_a_record_with_an_init_var_through_its_init() -> None:
