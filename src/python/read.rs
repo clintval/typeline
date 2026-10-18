@@ -379,9 +379,10 @@ enum Target<'py> {
 
 /// Builds records of one type from rows of text.
 ///
-/// A record whose type uses the `__init__` its dataclass generated is built as that `__init__`
-/// builds it, only faster: its fields are set directly, and then its `__post_init__` is called.
-/// A record of any other type is built by calling its type with its fields.
+/// A record whose type uses the `__init__` its dataclass generated, and whose `__new__` is
+/// `object.__new__`, is built as calling the type would build it, only faster: it is allocated,
+/// its fields are set directly, and then its `__post_init__` is called. A record of any other
+/// type is built by calling its type with its fields.
 #[pyclass(frozen, module = "typeline._native")]
 pub struct RecordBuilder {
     record_type: Py<PyType>,
@@ -511,7 +512,9 @@ impl RecordBuilder {
             )));
         }
         let mut target = match &self.direct {
-            // SAFETY: `alloc` is the record type's own `tp_alloc`, called with that type.
+            // SAFETY: `alloc` is the record type's own `tp_alloc`, called with that type, and
+            // Python only hands over a type whose `__new__` is `object.__new__`, which does no
+            // more than allocate, so no base is left without the state its `__new__` sets up.
             Some((alloc, _)) => Target::Record(unsafe {
                 Bound::from_owned_ptr_or_err(py, alloc(self.record_type.as_ptr().cast(), 0))?
             }),
