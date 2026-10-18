@@ -2,6 +2,12 @@ import csv
 import math
 import random
 from dataclasses import dataclass
+from datetime import date
+from datetime import datetime
+from datetime import time
+from datetime import timedelta
+from datetime import timezone
+from decimal import Decimal
 from enum import Enum
 from io import StringIO
 from os import linesep
@@ -9,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from typing import Optional  # pyright: ignore[reportDeprecated]
 from typing import cast
+from uuid import UUID
 
 import pytest
 
@@ -385,3 +392,46 @@ def test_writer_writes_what_a_codec_returns_that_is_not_text() -> None:
     TsvWriter[Count](handle, codecs={int: codec}).write(Count("x", 3))
 
     assert handle.getvalue() == f"x\t3{linesep}"
+
+
+class Shade(Enum):
+    """A shade, written as its value."""
+
+    LIGHT = 0.5
+    DARK = True
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (date(1, 2, 3), "0001-02-03"),
+        (datetime(2021, 3, 4, 5, 6, 7), "2021-03-04T05:06:07"),
+        (datetime(2021, 3, 4, 5, 6, 7, 89, tzinfo=timezone.utc), "2021-03-04T05:06:07.000089Z"),
+        (
+            datetime(2021, 3, 4, tzinfo=timezone(timedelta(hours=-5, minutes=-30))),
+            "2021-03-04T00:00:00-05:30",
+        ),
+        (
+            datetime(2021, 3, 4, tzinfo=timezone(timedelta(seconds=-61))),
+            "2021-03-04T00:00:00-00:01",
+        ),
+        (datetime(2021, 3, 4, tzinfo=timezone(timedelta(seconds=19))), "2021-03-04T00:00:00Z"),
+        (time(5, 6, 7, tzinfo=timezone(timedelta(hours=1))), "05:06:07+01:00"),
+        (UUID(int=1), "00000000-0000-0000-0000-000000000001"),
+        (Decimal("-1.50"), "-1.50"),
+        (Decimal("NaN"), "NaN"),
+        (Shade.LIGHT, "0.5"),
+        (Shade.DARK, "true"),
+    ],
+)
+def test_writer_writes_scalars_as_their_usual_text(value: object, text: str) -> None:
+    """Test that dates, times, UUIDs, decimals, and enums are written as their usual text."""
+
+    @dataclass
+    class Scalar:
+        value: Any
+
+    stream = StringIO()
+    TsvWriter[Scalar](stream).write(Scalar(value))
+
+    assert stream.getvalue() == f"{text}{linesep}"
