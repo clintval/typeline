@@ -3,9 +3,7 @@ name: tests
 on:
   push:
     branches:
-      - "**"
-    tags:
-      - "!**"
+      - main
   pull_request:
   workflow_call:
 
