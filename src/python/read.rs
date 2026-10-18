@@ -676,20 +676,20 @@ impl Source for Stream {
     }
 }
 
-/// Text given all at once, e.g. a line to decode.
-struct Text<'a>(Option<&'a str>);
+/// A line of text to decode, read all at once.
+#[derive(Default)]
+struct Line(String);
 
-impl Source for Text<'_> {
+impl Source for Line {
     type Error = Infallible;
 
     fn read(&mut self, text: &mut String) -> Result<bool, Infallible> {
-        match self.0.take() {
-            Some(given) => {
-                text.push_str(given);
-                Ok(true)
-            }
-            None => Ok(false),
+        if self.0.is_empty() {
+            return Ok(false);
         }
+        text.push_str(&self.0);
+        self.0.clear();
+        Ok(true)
     }
 }
 
@@ -700,6 +700,7 @@ impl Source for Text<'_> {
 #[pyclass(module = "typeline._native")]
 pub struct RowReader {
     rows: Rows<Stream>,
+    decoder: Rows<Line>,
     on_comment: Option<Py<PyAny>>,
     builder: Option<Py<RecordBuilder>>,
     #[pyo3(get, set)]
@@ -743,6 +744,7 @@ impl RowReader {
             comment_prefixes,
         };
         Ok(Self {
+            decoder: Rows::new(Line::default(), options.clone()),
             rows: Rows::new(stream, options),
             on_comment: on_comment.map(Bound::unbind),
             builder: None,
@@ -779,7 +781,7 @@ impl RowReader {
     /// The line may end with a line break, and a quoted field may hold line breaks. Blank text,
     /// a comment, text holding more than one record, and text ending inside a quoted field are
     /// refused.
-    fn decode<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
+    fn decode<'py>(&mut self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyAny>> {
         let Some(builder) = &self.builder else {
             return Err(PyValueError::new_err("No record type to build records of!"));
         };
@@ -792,18 +794,21 @@ impl RowReader {
                 ))
             })
         };
-        let options = self.rows.options();
-        let mut rows = Rows::new(Text(Some(text)), options.clone());
-        let Ok(first) = rows.read();
+        let decoder = &mut self.decoder;
+        decoder.source_mut().0.clear();
+        decoder.source_mut().0.push_str(text);
+        decoder.restart();
+        let Ok(first) = decoder.read();
         let row: Vec<String> = match first {
             None => return Err(refuse("blank line ", "")?),
             Some(Event::Comment { .. }) => return Err(refuse("comment line ", "")?),
             Some(Event::Row { row, .. }) => row.iter().map(str::to_string).collect(),
         };
-        let Ok(next) = rows.read();
+        let Ok(next) = decoder.read();
         if next.is_some() {
             return Err(refuse("", ", which holds more than one record")?);
         }
+        let options = decoder.options();
         if options.quoting && ends_in_quotes(text, options.delimiter) {
             return Err(refuse("", ", which ends inside a quoted field")?);
         }

@@ -102,20 +102,17 @@ pub struct Rows<S> {
 impl<S: Source> Rows<S> {
     /// Reads rows from a source of text.
     pub fn new(source: S, options: Options) -> Self {
-        let mut reader = ReaderBuilder::new()
+        let reader = ReaderBuilder::new()
             .delimiter(options.delimiter)
             .quoting(options.quoting)
             .quote(b'"')
             .double_quote(true)
             .build();
-        // csv-core drops a byte order mark that starts the first row it reads, wherever that row
-        // is, so a blank line is read first; `read` itself drops one only on the first line.
-        let _ = reader.read_record(b"\n", &mut [0], &mut [0]);
-        Self {
+        let mut rows = Self {
             source,
             options,
             reader,
-            input: Vec::with_capacity(CHUNK),
+            input: Vec::new(),
             at: 0,
             exhausted: false,
             chunk: String::new(),
@@ -124,12 +121,34 @@ impl<S: Source> Rows<S> {
             lines: 0,
             after_cr: false,
             started: false,
-        }
+        };
+        rows.restart();
+        rows
+    }
+
+    /// Reads the source from its start again, e.g. once it holds new text, forgetting the text
+    /// read so far and keeping the buffers, which building a reader anew would allocate again.
+    pub fn restart(&mut self) {
+        self.reader.reset();
+        // csv-core drops a byte order mark that starts the first row it reads, wherever that row
+        // is, so a blank line is read first; `read` itself drops one only on the first line.
+        let _ = self.reader.read_record(b"\n", &mut [0], &mut [0]);
+        self.input.clear();
+        self.at = 0;
+        self.exhausted = false;
+        self.lines = 0;
+        self.after_cr = false;
+        self.started = false;
     }
 
     /// The source of text.
     pub fn source(&self) -> &S {
         &self.source
+    }
+
+    /// The source of text, to give it more text.
+    pub fn source_mut(&mut self) -> &mut S {
+        &mut self.source
     }
 
     /// How rows are written in the text.
@@ -359,6 +378,18 @@ mod tests {
         }
     }
 
+    /// Reads every event left in rows of text, as owned values.
+    fn drain(rows: &mut Rows<Chunks>) -> Vec<(u64, Result<Vec<String>, String>)> {
+        let mut found = Vec::new();
+        while let Some(event) = rows.read().unwrap() {
+            found.push(match event {
+                Event::Comment { line, text } => (line, Err(text.to_string())),
+                Event::Row { line, row } => (line, Ok(row.iter().map(str::to_string).collect())),
+            });
+        }
+        found
+    }
+
     /// Reads every event of a text, served in chunks of a size, as owned values.
     fn events(text: &str, size: usize, quoting: bool) -> Vec<(u64, Result<Vec<String>, String>)> {
         let source = Chunks {
@@ -370,15 +401,7 @@ mod tests {
             quoting,
             comment_prefixes: vec!["#".to_string()],
         };
-        let mut rows = Rows::new(source, options);
-        let mut found = Vec::new();
-        while let Some(event) = rows.read().unwrap() {
-            found.push(match event {
-                Event::Comment { line, text } => (line, Err(text.to_string())),
-                Event::Row { line, row } => (line, Ok(row.iter().map(str::to_string).collect())),
-            });
-        }
-        found
+        drain(&mut Rows::new(source, options))
     }
 
     fn row(line: u64, fields: &[&str]) -> (u64, Result<Vec<String>, String>) {
@@ -457,6 +480,29 @@ mod tests {
             "\u{feff}\u{feff}\"",
         ] {
             assert!(!ends_in_quotes(text, b'\t'), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn rows_restarted_on_new_text_read_it_as_a_new_reader_would() {
+        let text = "\u{feff}# head\r\na\tb\n\n\"c\n";
+        let options = Options {
+            delimiter: b'\t',
+            quoting: true,
+            comment_prefixes: vec!["#".to_string()],
+        };
+        let mut rows = Rows::new(
+            Chunks {
+                chars: text.chars().collect(),
+                size: 2,
+            },
+            options,
+        );
+        assert_eq!(drain(&mut rows), events(text, 2, true));
+        for text in ["x\ty\r", "\u{feff}", text, ""] {
+            rows.source_mut().chars = text.chars().collect();
+            rows.restart();
+            assert_eq!(drain(&mut rows), events(text, 2, true), "{text:?}");
         }
     }
 
