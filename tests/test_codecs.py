@@ -8,7 +8,6 @@ from typing import Any
 from typing import Optional  # pyright: ignore[reportDeprecated]
 
 import pytest
-from msgspec import ValidationError
 from typing_extensions import override
 
 from typeline import Codecs
@@ -251,7 +250,7 @@ def test_reader_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
     with CsvReader.from_path[MyData](path, codecs={Color: COLOR}) as reader:
         message = (
             r"^Could not read field 'color' of type Color from text 'purple'"
-            + rf" on line 3 of '{escape(str(path))}'!$"
+            + rf" on line 3 of '{escape(str(path))}'! not enough values to unpack"
         )
         with pytest.raises(ValueError, match=message) as error:
             _ = list(reader)
@@ -473,10 +472,14 @@ class Holder:
 
 
 def test_reading_a_custom_type_without_a_codec_or_hook_names_the_field() -> None:
-    """Test that a custom type with no way to read it raises a ValidationError naming the field."""
+    """Test that a custom type with no way to read it raises a ValueError naming the field."""
     with (
         TsvReader[Holder](StringIO("x\n"), header=False) as reader,
-        pytest.raises(ValidationError, match=r"Expected Opaque, got str - at `\$\.thing`"),
+        pytest.raises(
+            ValueError,
+            match=r"^Could not read field 'thing' of type Opaque from text 'x' on line 1!"
+            + r" Expected Opaque, got str$",
+        ),
     ):
         _ = list(reader)
 

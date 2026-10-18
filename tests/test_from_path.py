@@ -10,7 +10,6 @@ from re import escape
 from typing import Any
 
 import pytest
-from msgspec import ValidationError
 
 from typeline import CsvReader
 from typeline import CsvWriter
@@ -265,10 +264,10 @@ def test_errors_name_the_file_a_reader_reads_from_a_path(
     path = tmp_path / "samples.tsv"
     _ = path.write_bytes(compress(b"a\tb\n"))
 
-    message = rf"^Could not build Sample from .* on line 1 of '{escape(str(path))}'! "
+    message = rf"^Could not read field 'reads' .* on line 1 of '{escape(str(path))}'!$"
     with (
         TsvReader.from_path[Sample](path, header=False) as reader,
-        pytest.raises(ValidationError, match=message),
+        pytest.raises(ValueError, match=message),
     ):
         _ = list(reader)
 
@@ -278,11 +277,11 @@ def test_errors_name_the_file_of_a_handle_a_reader_is_given(tmp_path: Path) -> N
     path = tmp_path / "samples.tsv"
     _ = path.write_text("name\treads\ntumor\t1200\nnormal\tmany\n")
 
-    message = rf"^Could not build Sample from .* on line 3 of '{escape(str(path))}'! "
-    with path.open() as handle, pytest.raises(ValidationError, match=message):
+    message = rf"^Could not read field 'reads' .* on line 3 of '{escape(str(path))}'!$"
+    with path.open() as handle, pytest.raises(ValueError, match=message):
         _ = list(TsvReader[Sample](handle))
 
-    with pytest.raises(ValidationError, match=r"^Could not build Sample from .* on line 3! "):
+    with pytest.raises(ValueError, match=r"^Could not read field 'reads' .* on line 3!$"):
         _ = list(TsvReader[Sample](StringIO(path.read_text())))
 
 
@@ -291,9 +290,9 @@ def test_decode_names_no_file_or_line_for_a_reader_from_a_path(tmp_path: Path) -
     path = tmp_path / "samples.tsv"
     _ = path.write_text(TEXT)
 
-    message = r"^Could not build Sample from \{'name': 'tumor', 'reads': 'many'\}! "
+    message = r"^Could not read field 'reads' of type int from text 'many'!$"
     with (
         TsvReader.from_path[Sample](path) as reader,
-        pytest.raises(ValidationError, match=message),
+        pytest.raises(ValueError, match=message),
     ):
         _ = reader.decode("tumor\tmany\n")

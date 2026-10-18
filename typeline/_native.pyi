@@ -5,29 +5,32 @@ from typing import Any
 from typing_extensions import Self
 
 class RecordBuilder:
-    """Builds records of one type from rows of text, one field per column."""
+    """Builds records of one type from rows of text, calling the record type with their fields."""
 
     def __init__(
         self,
         record_type: type[Any],
+        direct: bool,
         fields: list[
             tuple[
-                str,
                 int,
                 str,
                 str | None,
                 bool,
                 dict[str, Any] | None,
-                Callable[[str | bytes], Any] | None,
-                Callable[[str, int | None], Any],
+                Callable[[Any], Any] | None,
+                type | None,
+                Callable[[Any], Any] | None,
+                str,
+                str,
             ]
         ],
+        slots: list[tuple[str, int, str]],
         width: int,
-        extra: tuple[str, list[int], int] | None,
+        extra: tuple[list[int], int] | None,
         row_fields: Callable[[list[str], int | None], dict[str, Any]] | None,
         file_name: str | None,
         decode_error: type[Exception],
-        validation_error: type[Exception],
     ) -> None: ...
     def build(self, row: list[str], line_number: int | None) -> Any:
         """Build a record from a row, naming the line it starts on in errors."""
@@ -70,12 +73,7 @@ class RowReader:
     ) -> None: ...
     def read_row(self) -> tuple[list[str], int] | None:
         """Read the next row, e.g. a header, as its fields and the line it starts on."""
-    def bind(
-        self,
-        builder: RecordBuilder,
-        invalid: Callable[[list[str], int, Any], Exception],
-        validation_error: type[Exception],
-    ) -> None:
-        """Build records with a builder, explaining an invalid record with `invalid`."""
+    def bind(self, builder: RecordBuilder) -> None:
+        """Build records with a builder."""
     def __iter__(self) -> Self: ...
     def __next__(self) -> Any: ...

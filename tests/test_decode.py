@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from msgspec import ValidationError
 from typing_extensions import assert_type
 
 from typeline import Comment
@@ -278,7 +277,7 @@ def test_decode_names_a_field_its_codec_could_not_read() -> None:
 
     reader = TsvReader[Visit](StringIO(), header=False, codecs={bool: boolean()})
 
-    message = r"^Could not read field 'consented' of type bool from text 'yes'!$"
+    message = r"^Could not read field 'consented' of type bool from text 'yes'! Expected 'Y'"
     with pytest.raises(ValueError, match=message) as error:
         _ = reader.decode("P-001\tyes\n")
     assert isinstance(error.value.__cause__, ValueError)
@@ -293,13 +292,10 @@ def test_decode_names_a_column_that_does_not_hold_a_count() -> None:
         _ = reader.decode("north\t7\tmany\t10\n")
 
 
-def test_decode_names_the_record_it_could_not_build() -> None:
-    """Test that decode reports a record msgspec could not build, without a line number."""
+def test_decode_names_the_field_it_could_not_read() -> None:
+    """Test that decode reports the field it could not read, without a line number."""
     reader = TsvReader[SimpleMetric](StringIO(), header=False)
 
-    message = (
-        r"^Could not build SimpleMetric from"
-        + r" \{'field1': '1', 'field2': 'name', 'field3': 'BOMB'\}! Expected `float \| null`"
-    )
-    with pytest.raises(ValidationError, match=message):
+    message = r"^Could not read field 'field3' of type float from text 'BOMB'!$"
+    with pytest.raises(ValueError, match=message):
         _ = reader.decode("1\tname\tBOMB\n")

@@ -1,16 +1,19 @@
 import csv
+from dataclasses import InitVar
 from dataclasses import dataclass
+from dataclasses import field
 from enum import Enum
 from io import BytesIO
 from io import StringIO
 from pathlib import Path
 from re import escape
+from typing import Any
 from typing import Literal
 from typing import NewType
 from typing import Optional  # pyright: ignore[reportDeprecated]
+from typing import cast
 
 import pytest
-from msgspec import ValidationError
 
 from typeline import CsvReader
 from typeline import CsvWriter
@@ -150,11 +153,8 @@ def test_reader_raises_exception_for_failed_type_coercion(tmp_path: Path) -> Non
     with (
         TsvReader.from_path[SimpleMetric](tmp_path / "test.txt") as reader,
         pytest.raises(
-            ValidationError,
-            match=(
-                r"^Could not build SimpleMetric from"
-                + r" \{\'field1\'\: \'1\', \'field2\'\: \'name\', \'field3\'\: \'BOMB\'\}"
-            ),
+            ValueError,
+            match=r"^Could not read field 'field3' of type float from text 'BOMB' on line 2 of ",
         ),
     ):
         _ = list(reader)
@@ -184,11 +184,10 @@ def test_reader_msgspec_validation_exception(tmp_path: Path) -> None:
     with (
         CsvReader.from_path[MyData](path) as reader,
         pytest.raises(
-            ValidationError,
+            ValueError,
             match=(
-                r"^Could not build MyData from \{\'field1\'\: \'my\-name\'"
-                + rf".*\'field2\'\: None\}} on line 2 of '{escape(str(path))}'!"
-                + r".*Expected \`array\`\, got \`null\`"
+                r"^Could not read field 'field2' of type list\[int\] from text 'null'"
+                + rf" on line 2 of '{escape(str(path))}'! Expected `array`, got `null`$"
             ),
         ),
     ):
@@ -332,7 +331,7 @@ def test_errors_name_the_line_a_record_starts_on() -> None:
     text = 'field1,field2,field3\n1,"a\nb",x\n'
     with (
         CsvReader[SimpleMetric](StringIO(text)) as reader,
-        pytest.raises(ValidationError, match=r"^Could not build SimpleMetric from .* on line 2!"),
+        pytest.raises(ValueError, match=r"^Could not read field 'field3' .* on line 2!$"),
     ):
         _ = list(reader)
 
@@ -403,3 +402,138 @@ def test_reader_reads_a_field_longer_than_the_csv_module_allows() -> None:
     long = "x" * (csv.field_size_limit() + 1)
     with CsvReader[SimpleMetric](StringIO(f"1,{long},0.5\n"), header=False) as reader:
         assert list(reader) == [SimpleMetric(field1=1, field2=long, field3=0.5)]
+
+
+@dataclass
+class OptionalInt:
+    """A record of an optional integer."""
+
+    value: int | None
+
+
+@dataclass
+class OptionalFloat:
+    """A record of an optional float."""
+
+    value: float | None
+
+
+@dataclass
+class OptionalBool:
+    """A record of an optional boolean."""
+
+    value: bool | None
+
+
+@pytest.mark.parametrize(
+    ("record_type", "text"),
+    [
+        (OptionalInt, "1e3"),
+        (OptionalInt, "1.0"),
+        (OptionalInt, "+1"),
+        (OptionalInt, "007"),
+        (OptionalInt, "null"),
+        (OptionalFloat, "NaN"),
+        (OptionalFloat, "Infinity"),
+        (OptionalFloat, ".5"),
+        (OptionalBool, "1"),
+        (OptionalBool, "TRUE"),
+        (OptionalBool, "True"),
+    ],
+)
+def test_reader_reads_plain_fields_only_as_they_are_written(
+    record_type: type[OptionalInt | OptionalFloat | OptionalBool], text: str
+) -> None:
+    """Test that int, float, and bool fields read only the text a writer writes for them."""
+    message = rf"^Could not read field 'value' of type \w+ from text '{escape(text)}'!$"
+    with pytest.raises(ValueError, match=message):
+        reader: TsvReader[Any] = cast(Any, TsvReader)[record_type](StringIO(""), header=False)
+        _ = reader.decode(f"{text}\n")
+
+
+def test_reader_reads_back_every_float_and_integer_a_writer_writes() -> None:
+    """Test that the text a writer writes for floats and integers reads back as the same value."""
+
+    @dataclass
+    class Numbers:
+        real: float
+        whole: int
+
+    values = [
+        Numbers(float("nan"), 0),
+        Numbers(float("inf"), -1),
+        Numbers(float("-inf"), 2**70),
+        Numbers(1e-6, -(2**70)),
+        Numbers(-0.0, 7),
+    ]
+    stream = StringIO()
+    TsvWriter[Numbers](stream).write_all(values)
+    found = list(TsvReader[Numbers](StringIO(stream.getvalue()), header=False))
+
+    assert [repr(record) for record in found] == [repr(record) for record in values]
+
+
+def test_reader_builds_records_with_their_init() -> None:
+    """Test that records are built by their __init__, whatever kinds of field they have."""
+
+    @dataclass(frozen=True)
+    class Mixed:
+        name: str
+        count: int = field(kw_only=True)
+        label: str = field(init=False, default="unset")
+        ratio: float | None = None
+
+        def __post_init__(self) -> None:
+            object.__setattr__(self, "name", self.name.upper())
+
+    reader = TsvReader[Mixed](StringIO("a\t1\tset\t0.5\n"), header=False)
+    (record,) = list(reader)
+
+    assert (record.name, record.count, record.label, record.ratio) == ("A", 1, "set", 0.5)
+
+
+def test_reader_raises_an_error_of_init_as_it_is_with_a_note_of_its_line() -> None:
+    """Test that an error raised building a record is raised as it is, noting its line."""
+
+    @dataclass
+    class Checked:
+        count: int
+
+        def __post_init__(self) -> None:
+            if self.count < 0:
+                raise ValueError("count must not be negative!")
+
+    reader = TsvReader[Checked](StringIO("count\n1\n-1\n"))
+    with pytest.raises(ValueError, match=r"^count must not be negative!") as error:
+        _ = list(reader)
+
+    assert error.value.__notes__ == ["Raised while building Checked on line 3."]
+
+
+def test_reader_calls_the_init_a_record_type_defines_itself() -> None:
+    """Test that a record type with its own __init__ is built by calling it."""
+
+    @dataclass
+    class Shouted:
+        name: str
+
+        def __init__(self, name: str) -> None:
+            self.name = name.upper()
+
+    assert list(TsvReader[Shouted](StringIO("quiet\n"), header=False)) == [Shouted("QUIET")]
+
+
+def test_reader_builds_a_record_with_an_init_var_through_its_init() -> None:
+    """Test that a record whose __post_init__ takes an InitVar is built by its __init__."""
+
+    @dataclass
+    class Scaled:
+        value: int
+        scale: InitVar[int] = 10
+
+        def __post_init__(self, scale: int) -> None:
+            self.value *= scale
+
+    (record,) = list(TsvReader[Scaled](StringIO("4\n"), header=False))
+
+    assert record.value == 40

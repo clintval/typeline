@@ -399,7 +399,7 @@ def test_error_messages_explain_what_went_wrong(tmp_path: Path) -> None:
     _ = path.write_text("P-001\tSeptember 29\t120.50\tY\t3;\n")
     message = (
         r"^Could not read field 'seen' of type date from text 'September 29'"
-        + rf" on line 1 of '{escape(str(path))}'!$"
+        + rf" on line 1 of '{escape(str(path))}'! Invalid isoformat string"
     )
     with (
         TsvReader.from_path[Visit](path, header=False, codecs=VISIT_CODECS) as reader,
