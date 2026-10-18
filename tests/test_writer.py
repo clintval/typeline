@@ -2,6 +2,12 @@ import csv
 import math
 import random
 from dataclasses import dataclass
+from datetime import date
+from datetime import datetime
+from datetime import time
+from datetime import timedelta
+from datetime import timezone
+from decimal import Decimal
 from enum import Enum
 from io import StringIO
 from os import linesep
@@ -9,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from typing import Optional  # pyright: ignore[reportDeprecated]
 from typing import cast
+from uuid import UUID
 
 import pytest
 
@@ -203,15 +210,32 @@ def test_writer_refuses_text_it_cannot_write_without_quoting(text: str) -> None:
     assert stream.getvalue() == ""
 
 
-def test_writer_refuses_a_lone_empty_field_without_quoting() -> None:
-    """Test that without quoting a record of one empty field, which must be quoted, is refused."""
+@pytest.mark.parametrize("text", ["", " ", "\x0c", "\u3000"])
+def test_writer_refuses_a_lone_blank_field_without_quoting(text: str) -> None:
+    """Test that without quoting a record of one blank field, which must be quoted, is refused."""
 
     @dataclass
     class Name:
         name: str
 
-    with pytest.raises(ValueError, match="field 'name' of Name .* one empty field"):
-        TsvWriter[Name](StringIO(), quoting=False).write(Name(""))
+    with pytest.raises(ValueError, match="field 'name' of Name .* one blank field"):
+        TsvWriter[Name](StringIO(), quoting=False).write(Name(text))
+
+
+@pytest.mark.parametrize("text", ["", " ", "\x0c", "\u3000"])
+def test_writer_quotes_a_lone_blank_field_so_it_reads_back(text: str) -> None:
+    """Test that a record of one blank field is quoted, which a reader would else skip as blank."""
+
+    @dataclass
+    class Name:
+        name: str
+
+    handle = StringIO()
+    TsvWriter[Name](handle).write(Name(text))
+
+    assert handle.getvalue() == f'"{text}"{linesep}'
+    with TsvReader[Name](StringIO(handle.getvalue()), header=False) as reader:
+        assert list(reader) == [Name(text)]
 
 
 def test_writer_writes_the_delimiter_of_another_format_without_quoting(tmp_path: Path) -> None:
@@ -336,18 +360,39 @@ TRICKY: list[str] = ["", "a", "b c", ",", "\t", "|", '"', "'", "\n", "\r", "#", 
 """Pieces of text that the csv module quotes, or that sit next to text it quotes."""
 
 
+def csv_quotes_a_carriage_return() -> bool:
+    """Return whether the csv module quotes a carriage return, which some older Pythons do not."""
+    handle = StringIO()
+    csv.writer(handle, lineterminator=linesep).writerow(["\r"])
+    return handle.getvalue().startswith('"')
+
+
+@pytest.mark.parametrize(("writer", "reader"), [(CsvWriter, CsvReader), (TsvWriter, TsvReader)])
+def test_writer_quotes_a_carriage_return(writer: Any, reader: Any) -> None:
+    """Test that a field holding a carriage return is quoted, so it reads back as text."""
+    handle = StringIO()
+    writer[Lone](handle).write(Lone("a\rb"))
+
+    assert handle.getvalue() == f'"a\rb"{linesep}'
+    assert list(reader[Lone](StringIO(handle.getvalue()), header=False)) == [Lone("a\rb")]
+
+
 @pytest.mark.parametrize("kind", [CsvWriter, TsvWriter])
 def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
-    """Test that rows are written byte for byte as the csv module writes them, quoted or not."""
+    """Test that rows are written byte for byte as the csv module writes them, quoted or not.
+
+    Only a row that would read back as a comment or a blank line is quoted entirely instead.
+    """
     rng = random.Random(42)
+    pieces = [piece for piece in TRICKY if piece != "\r" or csv_quotes_a_carriage_return()]
 
     def text() -> str:
-        return "".join(rng.choices(TRICKY, k=rng.randrange(4)))
+        return "".join(rng.choices(pieces, k=rng.randrange(4)))
 
     records = [
         Texts(text(), text(), tuple(text() for _ in range(rng.randrange(3)))) for _ in range(5000)
     ]
-    lone = [Lone(piece) for piece in TRICKY]
+    lone = [Lone(piece) for piece in pieces]
 
     expected = StringIO()
     minimal = csv.writer(expected, delimiter=kind.delimiter, lineterminator=linesep)
@@ -356,7 +401,8 @@ def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
     )
     rows = [[record.first, record.second, *record.extra] for record in records]
     for row in [*rows, *([record.text] for record in lone)]:
-        (every if row[0].startswith("#") else minimal).writerow(row)
+        blank = len(row) == 1 and row[0].isspace()
+        (every if row[0].startswith("#") or blank else minimal).writerow(row)
 
     handle = StringIO()
     texts_writer = kind[Texts](handle)
@@ -369,19 +415,63 @@ def test_writer_writes_each_row_as_the_csv_module_does(kind: Any) -> None:
     assert handle.getvalue() == expected.getvalue()
 
 
-def test_writer_writes_what_a_codec_returns_that_is_not_text() -> None:
-    """Test that a codec returning something other than text is written as the csv module would."""
+@pytest.mark.parametrize(("value", "text"), [(3, "3"), (None, "None"), ([1, 2], "[1, 2]")])
+def test_writer_writes_what_a_codec_returns_that_is_not_text(value: object, text: str) -> None:
+    """Test that a codec returning something other than text is written as `str` writes it."""
 
     @dataclass
     class Count:
         name: str
         value: int
 
-    def as_is(value: Any) -> Any:
+    def as_is(_: Any) -> Any:
         return value
 
     codec: FieldCodec[int] = FieldCodec(from_text=int, into_text=as_is)
     handle = StringIO()
     TsvWriter[Count](handle, codecs={int: codec}).write(Count("x", 3))
 
-    assert handle.getvalue() == f"x\t3{linesep}"
+    assert handle.getvalue() == f"x\t{text}{linesep}"
+
+
+class Shade(Enum):
+    """A shade, written as its value."""
+
+    LIGHT = 0.5
+    DARK = True
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        (date(1, 2, 3), "0001-02-03"),
+        (datetime(2021, 3, 4, 5, 6, 7), "2021-03-04T05:06:07"),
+        (datetime(2021, 3, 4, 5, 6, 7, 89, tzinfo=timezone.utc), "2021-03-04T05:06:07.000089Z"),
+        (
+            datetime(2021, 3, 4, tzinfo=timezone(timedelta(hours=-5, minutes=-30))),
+            "2021-03-04T00:00:00-05:30",
+        ),
+        (
+            datetime(2021, 3, 4, tzinfo=timezone(timedelta(seconds=-61))),
+            "2021-03-04T00:00:00-00:01",
+        ),
+        (datetime(2021, 3, 4, tzinfo=timezone(timedelta(seconds=19))), "2021-03-04T00:00:00Z"),
+        (time(5, 6, 7, tzinfo=timezone(timedelta(hours=1))), "05:06:07+01:00"),
+        (UUID(int=1), "00000000-0000-0000-0000-000000000001"),
+        (Decimal("-1.50"), "-1.50"),
+        (Decimal("NaN"), "NaN"),
+        (Shade.LIGHT, "0.5"),
+        (Shade.DARK, "true"),
+    ],
+)
+def test_writer_writes_scalars_as_their_usual_text(value: object, text: str) -> None:
+    """Test that dates, times, UUIDs, decimals, and enums are written as their usual text."""
+
+    @dataclass
+    class Scalar:
+        value: Any
+
+    stream = StringIO()
+    TsvWriter[Scalar](stream).write(Scalar(value))
+
+    assert stream.getvalue() == f"{text}{linesep}"

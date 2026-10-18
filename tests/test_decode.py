@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from msgspec import ValidationError
 from typing_extensions import assert_type
 
 from typeline import Comment
@@ -192,17 +191,36 @@ def test_decode_reads_a_line_with_a_prefix_that_is_not_a_comment_prefix() -> Non
         pytest.param("a,b\r\nc,d", id="two-records-crlf"),
         pytest.param("a,b\rc,d", id="two-records-cr"),
         pytest.param('a,"b"\nc,d', id="after-a-quoted-field"),
-        pytest.param("a,b\n\n", id="trailing-blank-line"),
-        pytest.param("\na,b\n", id="leading-blank-line"),
+        pytest.param("a,b\n# c\n", id="followed-by-a-comment"),
     ],
 )
 def test_decode_refuses_text_holding_more_than_one_record(line: str) -> None:
-    """Test that decode refuses text holding more than one record, counting a blank line as one."""
+    """Test that decode refuses text holding more than one record, or a record and a comment."""
     reader = CsvReader[Note](StringIO(), header=False)
 
     message = r"^Could not decode Note from .*, which holds more than one record!$"
     with pytest.raises(ValueError, match=message):
         _ = reader.decode(line)
+
+
+def test_decode_skips_one_byte_order_mark_as_a_reader_does() -> None:
+    """Test that decode drops one byte order mark that starts the text, then reads what follows."""
+    reader = CsvReader[Note](StringIO(), header=False)
+
+    assert reader.decode("﻿a,b\n") == Note("a", "b")
+    assert reader.decode('﻿﻿",b\n') == Note('﻿"', "b")
+    with pytest.raises(ValueError, match=r"^Could not decode Note from comment line "):
+        _ = reader.decode("﻿# a,b\n")
+    with pytest.raises(ValueError, match=r"^Could not decode Note from blank line "):
+        _ = reader.decode("﻿ \n")
+
+
+@pytest.mark.parametrize("line", ["a,b\n\n", "\na,b\n", " \n\na,b\r\n\t\n"])
+def test_decode_skips_blank_lines_around_a_record(line: str) -> None:
+    """Test that decode skips blank lines before and after a record, as a reader skips them."""
+    reader = CsvReader[Note](StringIO(), header=False)
+
+    assert reader.decode(line) == Note("a", "b")
 
 
 def test_decode_keeps_line_breaks_that_do_not_end_a_line() -> None:
@@ -278,7 +296,7 @@ def test_decode_names_a_field_its_codec_could_not_read() -> None:
 
     reader = TsvReader[Visit](StringIO(), header=False, codecs={bool: boolean()})
 
-    message = r"^Could not read field 'consented' of type bool from text 'yes'!$"
+    message = r"^Could not read field 'consented' of type bool from text 'yes'! Expected 'Y'"
     with pytest.raises(ValueError, match=message) as error:
         _ = reader.decode("P-001\tyes\n")
     assert isinstance(error.value.__cause__, ValueError)
@@ -293,13 +311,10 @@ def test_decode_names_a_column_that_does_not_hold_a_count() -> None:
         _ = reader.decode("north\t7\tmany\t10\n")
 
 
-def test_decode_names_the_record_it_could_not_build() -> None:
-    """Test that decode reports a record msgspec could not build, without a line number."""
+def test_decode_names_the_field_it_could_not_read() -> None:
+    """Test that decode reports the field it could not read, without a line number."""
     reader = TsvReader[SimpleMetric](StringIO(), header=False)
 
-    message = (
-        r"^Could not build SimpleMetric from"
-        + r" \{'field1': '1', 'field2': 'name', 'field3': 'BOMB'\}! Expected `float \| null`"
-    )
-    with pytest.raises(ValidationError, match=message):
+    message = r"^Could not read field 'field3' of type float from text 'BOMB'!$"
+    with pytest.raises(ValueError, match=message):
         _ = reader.decode("1\tname\tBOMB\n")

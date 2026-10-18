@@ -166,6 +166,14 @@ def test_a_string_of_comment_prefixes_is_refused(kind: Any) -> None:
         _ = kind[Point](StringIO(), comment_prefixes="//")
 
 
+@pytest.mark.parametrize("kind", [TsvReader, TsvWriter])
+@pytest.mark.parametrize("prefixes", [[""], ["#", ""]])
+def test_an_empty_comment_prefix_is_refused(kind: Any, prefixes: list[str]) -> None:
+    """Test that an empty comment prefix is refused, since every line starts with it."""
+    with pytest.raises(ValueError, match=r"^comment_prefixes must not hold an empty prefix"):
+        _ = kind[Point](StringIO(), comment_prefixes=prefixes)
+
+
 def test_writer_writes_an_empty_comment_as_a_bare_prefix() -> None:
     """Test that an empty comment is written as a line holding only the first prefix."""
     handle = StringIO()

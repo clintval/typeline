@@ -416,7 +416,7 @@ def test_reader_error_names_the_field_and_its_column() -> None:
     message = r"^Could not read field 'bin_1_4' of type int from text 'seven' in column '1-4'"
     with (
         TsvReader[Bin](StringIO(text), rename=RENAME, codecs=codecs) as reader,
-        pytest.raises(ValueError, match=rf"{message} on line 2!$"),
+        pytest.raises(ValueError, match=rf"{message} on line 2! invalid literal for int\(\)"),
     ):
         _ = list(reader)
 

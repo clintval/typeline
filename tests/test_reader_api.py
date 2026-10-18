@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from io import StringIO
 from io import TextIOWrapper
 from pathlib import Path
+from re import escape
+from types import new_class
 from typing import Any
 from typing import TextIO
 from typing import cast
@@ -286,3 +288,12 @@ def test_subclasses_can_define_their_own_subscriptable_classmethods(csv_path: Pa
         records = list(reader)
 
     assert records == list(CsvReader.from_path[MyData](csv_path))
+
+
+@pytest.mark.parametrize("delimiter", ["", "||", "¦"])
+def test_a_delimiter_must_be_one_ascii_character(delimiter: str) -> None:
+    """Test that a format is refused when its delimiter is not one ASCII character."""
+    shown = escape(repr(delimiter))
+    message = rf"^The delimiter of BadReader must be one ASCII character, not {shown}!$"
+    with pytest.raises(ValueError, match=message):
+        _ = new_class("BadReader", (DelimitedDataReader,), {"delimiter": delimiter})

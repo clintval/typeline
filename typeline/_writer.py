@@ -1,11 +1,9 @@
-import csv
 import re
 from collections.abc import Iterable
 from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from io import StringIO
-from math import isfinite
 from os import linesep
 from pathlib import Path
 from types import TracebackType
@@ -15,7 +13,6 @@ from typing import Generic
 from typing import TextIO
 from typing import cast
 
-from msgspec import to_builtins
 from msgspec.json import Encoder as JSONEncoder
 from typing_extensions import Self
 from typing_extensions import TypedDict
@@ -28,6 +25,7 @@ from ._columns import NO_RENAME
 from ._columns import in_column
 from ._columns import name_columns
 from ._comment import Comment
+from ._comment import comment_prefixes_of
 from ._counter_columns import CounterFields
 from ._data_types import RecordType
 from ._data_types import extra_columns_field
@@ -35,9 +33,9 @@ from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import type_name
 from ._files import open_for_writing
+from ._native import RecordFormatter
 from .codecs import NO_CODECS
 from .codecs import Codecs
-from .codecs import FieldCodec
 
 DEFAULT_COMMENT_PREFIXES: tuple[str, ...] = ("#",)
 """The default prefixes of comment lines a writer writes."""
@@ -113,58 +111,52 @@ class DelimitedDataWriter(
 
         # Initialize and save internal attributes of this class.
         self._handle: TextIO = handle
-        self._record_type: type[RecordType] = record_type
-        self._none_field: str = none_field
-        self._enc_hook: Callable[[Any], Any] | None = enc_hook
-        self._quoting: bool = quoting
-        if isinstance(comment_prefixes, str):
-            raise TypeError(
-                "comment_prefixes must be a collection of strings,"
-                + f" not the string {comment_prefixes!r}!"
-            )
-        if not comment_prefixes:
+        self._comment_prefixes: tuple[str, ...] = comment_prefixes_of(comment_prefixes)
+        if not self._comment_prefixes:
             raise ValueError("comment_prefixes must hold at least one prefix!")
-        self._comment_prefixes: tuple[str, ...] = tuple(comment_prefixes)
         self._writes_header: bool = header
         self._header_pending: bool = header
 
-        # Inspect the record type and save the fields and field names.
-        self._field_type_map: dict[str, Any] = field_types(record_type)
-        self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
-        self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
-        self._column_of: dict[str, str] = name_columns(
-            record_type, self._field_type_map, self._extra_field, self._counters, rename
-        )
+        # Inspect the record type, and decide once how each field is written into its text.
+        field_type_map = field_types(record_type)
+        extra_field = extra_columns_field(record_type, field_type_map)
+        counters = CounterFields(record_type, field_type_map)
+        column_of = name_columns(record_type, field_type_map, extra_field, counters, rename)
         layout: list[tuple[str, str]] = [
             (name, column)
-            for name in self._field_type_map
-            if name != self._extra_field
-            for column in self._counters.columns_of(name, self._column_of)
+            for name in field_type_map
+            if name != extra_field
+            for column in counters.columns_of(name, column_of)
         ]
         self._header: tuple[str, ...] = tuple(column for _, column in layout)
-        self._header_fields: tuple[str, ...] = tuple(name for name, _ in layout)
-        self._field_codecs: list[tuple[str, FieldCodec[Any] | None, bool]] = [
-            (name, find_codec(field_type, codecs), name in self._counters)
-            for name, field_type in self._field_type_map.items()
-            if name != self._extra_field
-        ]
-
-        # Build a JSON encoder for writing values that are not strings once converted to builtins.
-        self._encoder: JSONEncoder = JSONEncoder()
-
-        # Build the delimited writer which will use platform-dependent newlines.
-        self._writer: Any = csv.writer(
-            handle,
-            delimiter=self.delimiter,
-            lineterminator=linesep,
-            quotechar='"' if quoting else None,
-            quoting=csv.QUOTE_MINIMAL if quoting else csv.QUOTE_NONE,
-        )
-        self._quoting_writer: Any = csv.writer(
-            handle, delimiter=self.delimiter, lineterminator=linesep, quoting=csv.QUOTE_ALL
+        fields: list[tuple[str, str, str, Any, str]] = []
+        for name, field_type in field_type_map.items():
+            if name == extra_field:
+                continue
+            if name in counters:
+                fields.append((name, "counts", "", counters.written(name), ""))
+                continue
+            codec = find_codec(field_type, codecs)
+            none = codec.missing if codec is not None and codec.missing is not None else none_field
+            where = in_column(name, column_of[name])
+            unwritable = f"Could not write field '{name}' of type {type_name(field_type)}{where}!"
+            if codec is None:
+                fields.append((name, "value", none, None, unwritable))
+            else:
+                fields.append((name, "codec", none, codec.into_text, unwritable))
+        self._formatter: RecordFormatter = RecordFormatter(
+            record_type,
+            fields,
+            extra_field,
+            JSONEncoder(enc_hook=enc_hook).encode,
+            self.delimiter,
+            linesep,
+            list(self._comment_prefixes),
+            quoting,
+            [f"field '{name}'{in_column(name, column)}" for name, column in layout],
         )
         if header and not quoting:
-            self._refuse_unquotable(self._header)
+            _ = self._formatter.line(self._header)
 
     @override
     def __enter__(self) -> Self:
@@ -183,139 +175,17 @@ class DelimitedDataWriter(
         self.close()
         return None
 
-    def _format(self, field_name: str, value: object, codec: FieldCodec[Any] | None) -> str:
-        """Write the value of one field into its text."""
-        if value is None:
-            if codec is not None and codec.missing is not None:
-                return codec.missing
-            return self._none_field
-
-        if codec is not None:
-            try:
-                return codec.into_text(value)
-            except Exception as exception:
-                raise self._unwritable(field_name) from exception
-
-        kind = type(value)
-        if kind is str and isinstance(value, str):
-            return value
-        if kind is int:
-            return str(value)
-        if kind is bool:
-            return "true" if value else "false"
-        if kind is float and isinstance(value, float):
-            return self._encoder.encode(value).decode("utf-8") if isfinite(value) else repr(value)
-
-        try:
-            builtin = to_builtins(value, str_keys=True, enc_hook=self._enc_hook)
-            return builtin if isinstance(builtin, str) else self._encoder.encode(builtin).decode()
-        except (TypeError, ValueError) as exception:
-            raise self._unwritable(field_name) from exception
-
-    def _unwritable(self, field_name: str) -> ValueError:
-        """Explain which field could not be written into its text."""
-        field_type = type_name(self._field_type_map[field_name])
-        where = in_column(field_name, self._column_of[field_name])
-        return ValueError(f"Could not write field '{field_name}' of type {field_type}{where}!")
-
     def write(self, record: RecordType) -> None:
         """Write the record to the open file-like object.
 
         Each field is written as the `none_field` when None, or with the codec for its type. Other
-        values are converted to builtin types, then written as-is when a string, or else as JSON.
+        values are written as-is when a string, or else as JSON, or the string their JSON holds.
         With `header=True`, the header is written first if it has not been written yet.
         """
-        if not isinstance(record, self._record_type):
-            raise ValueError(
-                f"Expected {self._record_type.__name__} but found {type(record).__name__}!"
-            )
-        if self._counters:
-            row: list[str] = []
-            for name, codec, is_counter in self._field_codecs:
-                if is_counter:
-                    row.extend(self._counters.write(name, getattr(record, name)))
-                else:
-                    row.append(self._format(name, getattr(record, name), codec))
-        else:
-            row = [
-                self._format(name, getattr(record, name), codec)
-                for name, codec, _ in self._field_codecs
-            ]
-        if self._extra_field is not None:
-            extra = getattr(record, self._extra_field)
-            if not all(type(text) is str for text in extra):
-                raise ValueError(
-                    f"The ExtraColumns field '{self._extra_field}' of"
-                    + f" {self._record_type.__name__} must hold text, but holds {extra!r}!"
-                )
-            row.extend(extra)
-        if not self._quoting:
-            self._refuse_unquotable(row)
+        line = self._formatter.format(record)
         if self._header_pending:
             self.write_header()
-        if not self._quoting:
-            self._writer.writerow(row)
-        elif row and row[0].startswith(self._comment_prefixes):
-            self._quoting_writer.writerow(row)
-        else:
-            self._write_minimal(row)
-
-    def _write_minimal(self, row: list[str]) -> None:
-        """Write a row with minimal quoting, skipping the csv module when no field needs quoting."""
-        try:
-            line = self.delimiter.join(row)
-        except TypeError:
-            self._writer.writerow(row)
-            return
-        # The csv module writes a row that needs no quoting as its fields joined by the delimiter.
-        if (
-            line
-            and not ('"' in line or "\n" in line or "\r" in line)
-            and line.count(self.delimiter) == len(row) - 1
-        ):
-            _ = self._handle.write(line + linesep)
-        else:
-            self._writer.writerow(row)
-
-    def _write_row(self, row: list[str] | tuple[str, ...]) -> None:
-        """Write a row, quoting it whole when its first field would read as a comment."""
-        if not self._quoting:
-            self._refuse_unquotable(row)
-            self._writer.writerow(row)
-        elif row and row[0].startswith(self._comment_prefixes):
-            self._quoting_writer.writerow(row)
-        else:
-            self._writer.writerow(row)
-
-    def _refuse_unquotable(self, row: list[str] | tuple[str, ...]) -> None:
-        """Refuse a row that cannot be written without quoting."""
-        like_comment = bool(row) and row[0].startswith(self._comment_prefixes)
-        if like_comment or list(row) == [""] or any(map(self._needs_quoting, row)):
-            raise self._unquotable(row)
-
-    def _needs_quoting(self, text: str) -> bool:
-        """Return whether text holds the delimiter or a line break, and so must be quoted."""
-        return self.delimiter in text or "\n" in text or "\r" in text
-
-    def _unquotable(self, row: list[str] | tuple[str, ...]) -> ValueError:
-        """Explain which field of a row cannot be written without quoting."""
-        index, reason = next(
-            (
-                (index, f"its text holds the delimiter or a line break: {text!r}")
-                for index, text in enumerate(row)
-                if self._needs_quoting(text)
-            ),
-            (0, "a record of one empty field must be quoted")
-            if list(row) == [""]
-            else (0, f"its text starts with a comment prefix: {row[0]!r}"),
-        )
-        named = index < len(self._header)
-        name = self._header_fields[index] if named else self._extra_field
-        where = in_column(self._header_fields[index], self._header[index]) if named else ""
-        return ValueError(
-            f"Cannot write field '{name}'{where} of {self._record_type.__name__} without quoting,"
-            + f" because {reason}!"
-        )
+        _ = self._handle.write(line)
 
     def write_all(self, records: Iterable[RecordType]) -> None:
         """Write every record in order, after the header when `header=True`.
@@ -324,8 +194,11 @@ class DelimitedDataWriter(
         """
         if self._header_pending:
             self.write_header()
-        for record in records:
-            self.write(record)
+        if type(self).write is not DelimitedDataWriter[Any].write:
+            for record in records:
+                self.write(record)
+            return
+        self._formatter.write_all(records, self._handle.write)
 
     def write_header(self) -> None:
         """Write the header line to the open file-like object.
@@ -336,7 +209,7 @@ class DelimitedDataWriter(
         if self._writes_header and not self._header_pending:
             return
         self._header_pending = False
-        self._write_row(self._header)
+        _ = self._handle.write(self._formatter.line(self._header))
 
     def write_comment(self, comment: str | Comment) -> None:
         """Write a comment, e.g. one a reader sent to `on_comment`.
@@ -392,7 +265,7 @@ class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -401,11 +274,12 @@ class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):
         >>>
         >>> from typeline import CsvWriter
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with CsvWriter.from_path[MyData](tmpfile.name) as writer:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.csv"
+        ...     with CsvWriter.from_path[MyData](path) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
-        ...     Path(tmpfile.name).read_text()
+        ...     path.read_text()
         'field1,field2\nmy-name,0.2\n'
 
         ```
@@ -419,7 +293,7 @@ class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
         ```pycon
         >>> from pathlib import Path
         >>> from dataclasses import dataclass
-        >>> from tempfile import NamedTemporaryFile
+        >>> from tempfile import TemporaryDirectory
         >>>
         >>> @dataclass
         ... class MyData:
@@ -428,11 +302,12 @@ class TsvWriter(DelimitedDataWriter[RecordType], delimiter="\t"):
         >>>
         >>> from typeline import TsvWriter
         >>>
-        >>> with NamedTemporaryFile(mode="w+t") as tmpfile:
-        ...     with TsvWriter.from_path[MyData](tmpfile.name) as writer:
+        >>> with TemporaryDirectory() as folder:
+        ...     path = Path(folder) / "data.tsv"
+        ...     with TsvWriter.from_path[MyData](path) as writer:
         ...         writer.write_header()
         ...         writer.write(MyData(field1="my-name", field2=0.2))
-        ...     Path(tmpfile.name).read_text()
+        ...     path.read_text()
         'field1\tfield2\nmy-name\t0.2\n'
 
         ```

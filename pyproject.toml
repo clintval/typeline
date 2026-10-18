@@ -1,6 +1,6 @@
 [project]
 name = "typeline"
-version = "2.4.2"
+dynamic = ["version"]
 description = "Write dataclasses to delimited text formats and read them back again."
 authors = [{ name = "Clint Valentine", email = "valentine.clint@gmail.com" }]
 license = "MIT"
@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
     "Topic :: File Formats",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -37,6 +38,7 @@ classifiers = [
 [dependency-groups]
 dev = [
     "basedpyright ~=1.40",
+    "maturin ~=1.15",
     "mypy ~=2.3",
     "poethepoet ~=0.48",
     "pytest ~=9.1",
@@ -48,24 +50,41 @@ dev = [
 ]
 
 [build-system]
-requires      = ["hatchling"]
-build-backend = "hatchling.build"
+requires      = ["maturin>=1.15,<2"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.sdist]
-only-include = ["typeline", "tests", "conftest.py", "README.md", "CONTRIBUTING.md", "LICENSE"]
+[tool.maturin]
+module-name = "typeline._native"
+features    = ["python"]
+include     = [
+    { path = "CONTRIBUTING.md", format = "sdist" },
+    { path = "LICENSE", format = "sdist" },
+    { path = "conftest.py", format = "sdist" },
+    { path = "tests/*.py", format = "sdist" },
+]
+exclude     = [
+    { path = ".github/**/*", format = "sdist" },
+]
 
 [tool.uv]
 # Ignore releases younger than a week, so a compromised publish has time to be
 # caught before it can be locked. Must stay >= the Dependabot `cooldown` in
 # .github/dependabot.yml, or Dependabot will propose versions that can't lock.
 exclude-newer = "1 week"
+cache-keys    = [
+    { file = "pyproject.toml" },
+    { file = "Cargo.toml" },
+    { file = "Cargo.lock" },
+    { file = "src/**/*.rs" },
+]
 
 [tool.poe.tasks]
 fix-format = "ruff format"
 fix-lint = "ruff check --fix"
+fix-rust = "cargo fmt"
 
 fix-all.ignore_fail = "return_non_zero"
-fix-all.sequence = ["fix-format", "fix-lint"]
+fix-all.sequence = ["fix-format", "fix-lint", "fix-rust"]
 
 check-lock = "uv lock --check"
 check-pyproject = "validate-pyproject pyproject.toml"
@@ -78,6 +97,17 @@ _check-pyright = "basedpyright"
 _check-ty = "ty check"
 check-typing.sequence = ["_check-mypy", "_check-pyright", "_check-ty"]
 
+_check-rust-format = "cargo fmt --check"
+_check-rust-lint = "cargo clippy --all-targets --all-features --locked -- -D warnings"
+_check-rust-tests = "cargo test --locked"
+_check-rust-docs = { cmd = "cargo doc --no-deps --locked", env = { RUSTDOCFLAGS = "-D warnings" } }
+check-rust.sequence = [
+    "_check-rust-format",
+    "_check-rust-lint",
+    "_check-rust-tests",
+    "_check-rust-docs",
+]
+
 check-all.ignore_fail = "return_non_zero"
 check-all.sequence = [
     "check-lock",
@@ -85,7 +115,8 @@ check-all.sequence = [
     "check-format",
     "check-lint",
     "check-tests",
-    "check-typing"
+    "check-typing",
+    "check-rust",
 ]
 
 fix-and-check-all.ignore_fail = "return_non_zero"

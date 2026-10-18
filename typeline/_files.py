@@ -30,6 +30,13 @@ SUFFIXES: dict[str, str] = {".gz": "gzip", ".bz2": "bzip2", ".xz": "xz"}
 OPENERS: dict[str, Callable[..., Any]] = {"gzip": gzip.open, "bzip2": bz2.open, "xz": lzma.open}
 """How to open a file to write in each compression format."""
 
+DECOMPRESSORS: dict[str, Callable[[io.BufferedReader], Any]] = {
+    "gzip": lambda source: gzip.GzipFile(fileobj=source),
+    "bzip2": bz2.BZ2File,
+    "xz": lzma.LZMAFile,
+}
+"""How to decompress a stream of each compression format, which leaves the stream open."""
+
 
 class _Prefixed(io.RawIOBase):
     """A stream of bytes already read from a stream, followed by the rest of that stream."""
@@ -37,10 +44,6 @@ class _Prefixed(io.RawIOBase):
     def __init__(self, prefix: bytes, rest: io.BufferedReader) -> None:
         self._prefix: bytes = prefix
         self._rest: io.BufferedReader = rest
-
-    @property
-    def name(self) -> Any:
-        return self._rest.name
 
     @override
     def readable(self) -> bool:
@@ -56,50 +59,25 @@ class _Prefixed(io.RawIOBase):
         self._prefix = self._prefix[count:]
         return count
 
-    @override
-    def close(self) -> None:
-        try:
-            self._rest.close()
-        finally:
-            super().close()
 
+class _TextFile(io.TextIOWrapper):
+    """UTF-8 text read from an open file, named after the file and closing it when closed."""
 
-class _ClosesSource(io.BufferedIOBase):
-    """A decompressed stream that closes the stream it decompresses when it is closed."""
-
-    source: io.BufferedReader
-
-    @override
-    def close(self) -> None:
-        try:
-            super().close()
-        finally:
-            self.source.close()
-
-
-class _NamedAfterSource(_ClosesSource):
-    """A decompressed stream named after the stream it decompresses, as gzip names itself."""
+    def __init__(self, stream: Any, source: io.BufferedReader) -> None:
+        super().__init__(stream, encoding="utf-8-sig", newline="")
+        self._source: io.BufferedReader = source
 
     @property
+    @override
     def name(self) -> Any:
-        return self.source.name
+        return self._source.name
 
-
-class _GzipFile(_ClosesSource, gzip.GzipFile): ...
-
-
-class _BZ2File(_NamedAfterSource, bz2.BZ2File): ...
-
-
-class _LZMAFile(_NamedAfterSource, lzma.LZMAFile): ...
-
-
-DECOMPRESSORS: dict[str, Callable[[io.BufferedReader], _GzipFile | _BZ2File | _LZMAFile]] = {
-    "gzip": lambda source: _GzipFile(fileobj=source),
-    "bzip2": _BZ2File,
-    "xz": _LZMAFile,
-}
-"""How to decompress a stream of each compression format."""
+    @override
+    def close(self) -> None:
+        try:
+            super().close()
+        finally:
+            self._source.close()
 
 
 def _start(source: io.BufferedReader) -> tuple[bytes, io.BufferedReader]:
@@ -128,11 +106,8 @@ def open_for_reading(path: Path | str) -> TextIO:
         compression = next(
             (name for name, signature in SIGNATURES.items() if signature.match(start)), None
         )
-        if compression is None:
-            return io.TextIOWrapper(stream, encoding="utf-8-sig", newline="")
-        decompressor = DECOMPRESSORS[compression](stream)
-        decompressor.source = stream
-        return io.TextIOWrapper(decompressor, encoding="utf-8-sig", newline="")
+        buffer: Any = stream if compression is None else DECOMPRESSORS[compression](stream)
+        return _TextFile(buffer, source)
     except BaseException:
         source.close()
         raise

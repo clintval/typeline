@@ -12,7 +12,6 @@ from typing_extensions import override
 
 from ._data_types import strip_annotated
 from ._data_types import strip_optional
-from ._files import on_line
 
 
 class _CounterColumnsMarker:
@@ -69,18 +68,6 @@ class CounterFields:
                 self._enums[name] = self._enum_of(record_type, name, field_type)
                 for member in self._enums[name]:
                     self._claim(record_type, name, member, field_type_map)
-        self._by_key: dict[str, dict[object, Enum]] = {
-            name: {key: member for member in enum for key in (member, member.value)}
-            for name, enum in self._enums.items()
-        }
-        self._positions: dict[str, list[tuple[Enum, int]]] = {name: [] for name in self._enums}
-        self._zeros: dict[str, dict[Enum, int]] = {
-            name: dict.fromkeys(enum, 0) for name, enum in self._enums.items()
-        }
-
-    def __bool__(self) -> bool:
-        """Return whether the record has any `CounterColumns` field."""
-        return bool(self._enums)
 
     def __contains__(self, name: object) -> bool:
         """Return whether a field is a `CounterColumns` field."""
@@ -129,56 +116,22 @@ class CounterFields:
         found = self._by_column.get(column)
         return None if found is None else found[0]
 
-    def locate(self, layout: list[str]) -> None:
-        """Find where each member's column is in the columns of the data."""
-        self._positions = {name: [] for name in self._enums}
-        for index, column in enumerate(layout):
-            if column in self._by_column:
-                name, member = self._by_column[column]
-                self._positions[name].append((member, index))
+    def locate(self, layout: list[str]) -> list[tuple[str, list[tuple[Enum, str, int]]]]:
+        """Return each field's members, with the name and index of each member's column."""
+        index_of = {column: index for index, column in enumerate(layout)}
+        return [
+            (name, [(member, member.value, index_of[member.value]) for member in enum])
+            for name, enum in self._enums.items()
+        ]
 
-    def read(
-        self, row: list[str], line_number: int | None, file_name: str | None
-    ) -> dict[str, Counter[Enum]]:
-        """Read the count of each member of each field from its column in a row."""
-        counters: dict[str, Counter[Enum]] = {}
-        for name, zeros in self._zeros.items():
-            counts: Counter[Enum] = Counter(zeros)
-            for member, index in self._positions[name]:
-                text = row[index]
-                if not (text.isascii() and text.isdigit()):
-                    raise ValueError(
-                        f"Could not read column '{member.value}' of field '{name}' as a count"
-                        + f" from '{text}'{on_line(line_number, file_name)}!"
-                    )
-                counts[member] = int(text)
-            counters[name] = counts
-        return counters
+    def written(self, name: str) -> tuple[dict[object, int], list[str], str]:
+        """Return how a field's counts are written.
 
-    def write(self, name: str, counts: Mapping[Any, object]) -> list[str]:
-        """Write the count of each member of a field in enum order, 0 when absent."""
+        That is the index of each member, by the member and by its value, the column of each
+        member in enum order, and the name of the enum.
+        """
         enum = self._enums[name]
-        by_key = self._by_key[name]
-        by_member: dict[Enum, object] = {}
-        for key, count in counts.items():
-            member = by_key.get(key)
-            if member is None:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts '{key}'"
-                    + f" that is not a member of {enum.__name__}!"
-                )
-            if member in by_member:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts '{member.value}' twice!"
-                )
-            by_member[member] = count
-        texts: list[str] = []
-        for member in enum:
-            count = by_member.get(member, 0)
-            if type(count) is not int or count < 0:
-                raise ValueError(
-                    f"Could not write field '{name}', which counts {count!r} of '{member.value}'"
-                    + "; counts must be non-negative integers!"
-                )
-            texts.append(str(count))
-        return texts
+        index_of: dict[object, int] = {
+            key: index for index, member in enumerate(enum) for key in (member, member.value)
+        }
+        return index_of, [member.value for member in enum], enum.__name__

@@ -8,7 +8,6 @@ from typing import Any
 from typing import Optional  # pyright: ignore[reportDeprecated]
 
 import pytest
-from msgspec import ValidationError
 from typing_extensions import override
 
 from typeline import Codecs
@@ -180,6 +179,21 @@ def test_reader_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> No
         assert list(reader) == [MyData(Color(101, 2, 32), [1, 2, 3])]
 
 
+def test_reader_keeps_what_a_codec_reads_as_the_value_of_its_field() -> None:
+    """Test that a codec's value is the field's value as it is, even of another type."""
+
+    @dataclass
+    class Blocks:
+        sizes: tuple[int, ...]
+
+    reader = TsvReader[Blocks](StringIO(), header=False, codecs={tuple[int, ...]: delimited(int)})
+
+    record: Any = reader.decode("1,2\n")
+
+    assert record.sizes == [1, 2]
+    assert type(record.sizes) is list
+
+
 def test_reader_matches_codecs_by_exact_field_type(tmp_path: Path) -> None:
     """Test that a codec for one type is not used for a different field type."""
 
@@ -251,11 +265,31 @@ def test_reader_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
     with CsvReader.from_path[MyData](path, codecs={Color: COLOR}) as reader:
         message = (
             r"^Could not read field 'color' of type Color from text 'purple'"
-            + rf" on line 3 of '{escape(str(path))}'!$"
+            + rf" on line 3 of '{escape(str(path))}'! not enough values to unpack"
         )
         with pytest.raises(ValueError, match=message) as error:
             _ = list(reader)
     assert isinstance(error.value.__cause__, ValueError)
+
+
+def interrupt(_: object) -> Any:
+    """Interrupt, as a codec might when the user presses Ctrl-C."""
+    raise KeyboardInterrupt
+
+
+def test_readers_and_writers_raise_an_interrupt_of_a_codec_as_it_is() -> None:
+    """Test that an exit or interrupt raised by a codec is not wrapped as a ValueError."""
+
+    @dataclass
+    class MyData:
+        color: Color
+
+    codecs: Codecs = {Color: FieldCodec(from_text=interrupt, into_text=interrupt)}
+
+    with pytest.raises(KeyboardInterrupt):
+        _ = list(TsvReader[MyData](StringIO("1,2,3\n"), header=False, codecs=codecs))
+    with pytest.raises(KeyboardInterrupt):
+        TsvWriter[MyData](StringIO(), codecs=codecs).write(MyData(Color(1, 2, 3)))
 
 
 def test_writer_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> None:
@@ -473,10 +507,14 @@ class Holder:
 
 
 def test_reading_a_custom_type_without_a_codec_or_hook_names_the_field() -> None:
-    """Test that a custom type with no way to read it raises a ValidationError naming the field."""
+    """Test that a custom type with no way to read it raises a ValueError naming the field."""
     with (
         TsvReader[Holder](StringIO("x\n"), header=False) as reader,
-        pytest.raises(ValidationError, match=r"Expected Opaque, got str - at `\$\.thing`"),
+        pytest.raises(
+            ValueError,
+            match=r"^Could not read field 'thing' of type Opaque from text 'x' on line 1!"
+            + r" Expected `Opaque`, got `str`$",
+        ),
     ):
         _ = list(reader)
 
