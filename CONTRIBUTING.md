@@ -96,6 +96,6 @@ uv run poe fix-and-check-all
 ## Releasing
 
 Commit titles follow [Conventional Commits](https://www.conventionalcommits.org), which group the release notes.
-The version is set only in `Cargo.toml`, which `pyproject.toml` reads it from.
+The version is set only in `Cargo.toml`, and `pyproject.toml` reads it from there.
 To release, merge a pull request titled `chore(release): bump to X.Y.Z` that sets the version in `Cargo.toml` and updates `Cargo.lock` with `cargo update --workspace`, then tag its commit on `main` with `X.Y.Z` and push the tag.
 The `publish_typeline.yml` workflow then checks that the tag matches the version, runs the tests, builds the source distribution and a wheel for every platform, checks that each installs and works, publishes them to PyPI, and makes a GitHub release with notes from [git-cliff](https://git-cliff.org).
