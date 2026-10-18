@@ -10,7 +10,8 @@
 
 Write dataclasses to delimited text formats and read them back again.
 
-Headers are matched to fields by name, values are typed by msgspec, and custom formats, comments, extra columns, and compressed files are supported.
+Headers are matched to fields by name, values are typed by the fields' annotations, and custom formats, comments, extra columns, and compressed files are supported.
+A native engine reads and writes `str`, `int`, `float`, and `bool` fields, dates, times, UUIDs, decimals, enums, and literals itself, and hands fields that hold JSON, such as lists, dicts, and nested dataclasses, to msgspec.
 
 ## Installation
 
@@ -67,6 +68,7 @@ with TsvReader.from_path[MyData](path) as reader:
 
 A reader expects a header by default, and matches its columns to fields by name, in any order.
 Pass `header=False` to read columns in field order.
+A field that cannot be read raises a `ValueError` naming the field, its type, its text, and its line, and so does a row with the wrong number of columns.
 A reader from `from_path` closes its file once it is read to the end, so reading everything into a list needs no `with` block.
 
 ```python
@@ -76,6 +78,7 @@ assert list(TsvReader.from_path[MyData](path)) == records
 ### Any Text Stream
 
 To use an open text stream instead of a path, subscript the reader or writer class itself.
+Lines end at `\n`, `\r\n`, or a lone `\r`, however the stream was opened.
 
 Leaving the `with` block closes the stream.
 
@@ -91,7 +94,7 @@ with TsvReader[MyData](StringIO("10\ttest1\t0.2\n"), header=False) as reader:
 A reader's `decode` reads one record from a line of text, just as the reader reads each record of its file, with its delimiter and other options.
 It reads nothing from the reader's stream, so one reader can decode many lines, which is much faster than building a reader for each.
 A reader built on an empty stream has no header, so it decodes columns in field order.
-A blank line, a comment, or text holding more than one record is refused with a `ValueError`.
+Blank lines around the record are skipped, and blank text, a comment, text holding more than one record, or text ending inside a quoted field is refused with a `ValueError`.
 
 ```python
 reader = TsvReader[MyData](StringIO())
@@ -248,8 +251,11 @@ with TsvReader.from_path[Region](path, header=False, quoting=False) as reader:
 
 ### Custom Field Formats
 
-Lists, tuples, sets, dicts, and nested dataclasses are written as JSON by default, and dates, enums, and the like as their usual text.
+`str`, `int`, `float`, and `bool` fields are written as their usual text, and read back strictly, so `12.0` is not an `int` and `True` is not a `bool`.
+A union of plain types, like `int | str`, reads its text as the first of `bool`, `int`, `float`, and `str` that fits.
+Dates, times, UUIDs, decimals, enums, and literals are written as their usual text too, and lists, tuples, sets, dicts, and nested dataclasses as JSON.
 For any other text format, a `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
+The value a codec reads is the field's value as it is, so a codec returns the field's type.
 Helpers in `typeline.codecs` cover common formats.
 
 ```python
@@ -280,7 +286,7 @@ with TsvReader.from_path[Visit](path, header=False, codecs=codecs) as reader:
 ```
 
 Custom types nested anywhere inside a field, like a `list[Interval]`, are handled by `enc_hook`, which turns such an object into builtin values, and `dec_hook`, which builds it back from them.
-Each hook raises `NotImplementedError` for types it does not handle.
+The hooks apply to the fields msgspec handles, and each raises `NotImplementedError` for types it does not handle.
 
 ```python
 class Interval:
@@ -318,6 +324,7 @@ with TsvReader.from_path[Target](path, header=False, dec_hook=dec_hook) as reade
 ### Your Own Format
 
 Subclass a reader to give a format its own defaults.
+A format with another delimiter, which must be one ASCII character, subclasses a reader or writer with it, e.g. `class PipeReader(DelimitedDataReader[RecordType], delimiter="|")`.
 
 ```python
 from typing import TextIO
