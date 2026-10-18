@@ -203,6 +203,18 @@ def test_decode_refuses_text_holding_more_than_one_record(line: str) -> None:
         _ = reader.decode(line)
 
 
+def test_decode_skips_one_byte_order_mark_as_a_reader_does() -> None:
+    """Test that decode drops one byte order mark that starts the text, then reads what follows."""
+    reader = CsvReader[Note](StringIO(), header=False)
+
+    assert reader.decode("﻿a,b\n") == Note("a", "b")
+    assert reader.decode('﻿﻿",b\n') == Note('﻿"', "b")
+    with pytest.raises(ValueError, match=r"^Could not decode Note from comment line "):
+        _ = reader.decode("﻿# a,b\n")
+    with pytest.raises(ValueError, match=r"^Could not decode Note from blank line "):
+        _ = reader.decode("﻿ \n")
+
+
 @pytest.mark.parametrize("line", ["a,b\n\n", "\na,b\n", " \n\na,b\r\n\t\n"])
 def test_decode_skips_blank_lines_around_a_record(line: str) -> None:
     """Test that decode skips blank lines before and after a record, as a reader skips them."""

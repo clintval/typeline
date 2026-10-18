@@ -306,7 +306,8 @@ enum Quotes {
 /// Returns whether text, read as rows, ends inside a quoted field that nothing closes.
 pub fn ends_in_quotes(text: &str, delimiter: u8) -> bool {
     let mut quotes = Quotes::FieldStart;
-    for &byte in text.trim_start_matches('\u{feff}').as_bytes() {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    for &byte in text.as_bytes() {
         quotes = match (quotes, byte) {
             (Quotes::Quoted, b'"') => Quotes::Closed,
             (Quotes::Quoted, _) | (Quotes::FieldStart | Quotes::Closed, b'"') => Quotes::Quoted,
@@ -453,6 +454,7 @@ mod tests {
             "\"a\"\"b\"\n",
             "\"a\"c\"\n",
             "a\"\n",
+            "\u{feff}\u{feff}\"",
         ] {
             assert!(!ends_in_quotes(text, b'\t'), "{text:?}");
         }
