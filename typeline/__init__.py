@@ -33,3 +33,8 @@ __all__ = [
     "TsvWriter",
     "WriterOptions",
 ]
+
+
+def __dir__() -> list[str]:
+    """List the public names of the package, leaving out its private modules."""
+    return sorted([*__all__, "codecs"])
