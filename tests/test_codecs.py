@@ -272,6 +272,26 @@ def test_reader_names_the_field_when_a_codec_fails(tmp_path: Path) -> None:
     assert isinstance(error.value.__cause__, ValueError)
 
 
+def interrupt(_: object) -> Any:
+    """Interrupt, as a codec might when the user presses Ctrl-C."""
+    raise KeyboardInterrupt
+
+
+def test_readers_and_writers_raise_an_interrupt_of_a_codec_as_it_is() -> None:
+    """Test that an exit or interrupt raised by a codec is not wrapped as a ValueError."""
+
+    @dataclass
+    class MyData:
+        color: Color
+
+    codecs: Codecs = {Color: FieldCodec(from_text=interrupt, into_text=interrupt)}
+
+    with pytest.raises(KeyboardInterrupt):
+        _ = list(TsvReader[MyData](StringIO("1,2,3\n"), header=False, codecs=codecs))
+    with pytest.raises(KeyboardInterrupt):
+        TsvWriter[MyData](StringIO(), codecs=codecs).write(MyData(Color(1, 2, 3)))
+
+
 def test_writer_uses_a_codec_registered_for_the_field_type(tmp_path: Path) -> None:
     """Test that the writer writes a field with the codec registered for its declared type."""
 

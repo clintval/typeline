@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{
@@ -186,6 +186,8 @@ impl Field {
     }
 
     /// Explains that the field could not be read from its text, and why when there is a cause.
+    ///
+    /// A cause that is not an `Exception`, e.g. a `KeyboardInterrupt`, is raised as it is.
     fn unreadable(
         &self,
         py: Python<'_>,
@@ -194,6 +196,10 @@ impl Field {
         file_name: Option<&str>,
         cause: Option<PyErr>,
     ) -> PyErr {
+        let cause = match cause {
+            Some(cause) if !cause.is_instance_of::<PyException>(py) => return cause,
+            cause => cause,
+        };
         let reason = cause
             .as_ref()
             .and_then(|cause| cause.value(py).str().ok())
