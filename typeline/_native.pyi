@@ -6,19 +6,17 @@ from typing import Any
 from typing_extensions import Self
 
 class RecordBuilder:
-    """Builds records of one type from rows of text, calling the record type with their fields."""
+    """Builds records of one type from rows of text."""
 
     def __init__(
         self,
         record_type: type[Any],
-        direct: bool,
-        fields: list[tuple[int, str, str | None, Any, str, str]],
-        slots: list[tuple[str, int, str]],
+        fields: list[tuple[str, int, str, str | None, Any, str, str]],
+        init: list[str] | None,
         width: int,
-        extra: tuple[list[int], int] | None,
+        extra: tuple[str, list[int]] | None,
         row_fields: Callable[[list[str], int | None], dict[str, Any]] | None,
         file_name: str | None,
-        decode_error: type[Exception],
     ) -> None: ...
     def build(self, row: list[str], line_number: int | None) -> Any:
         """Build a record from a row, naming the line it starts on in errors."""

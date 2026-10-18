@@ -1,6 +1,6 @@
 //! Reading records natively from rows of delimited text.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::ffi;
@@ -42,13 +42,8 @@ enum Lane {
     },
     /// Read a decimal with Python's `Decimal`.
     Decimal(Py<PyAny>),
-    /// Read the text with a codec, keeping a value of the field's class as it is and coercing any
-    /// other value to the field's type.
-    Codec {
-        read: Py<PyAny>,
-        trusted: Option<Py<PyAny>>,
-        coerce: Py<PyAny>,
-    },
+    /// Read the text with a codec, whose value is the field's value.
+    Codec(Py<PyAny>),
     /// Decode the text as JSON with the field's typed decoder.
     Decode { decode: Py<PyAny>, json_like: bool },
 }
@@ -101,14 +96,7 @@ impl Lane {
                 }
             }
             "decimal" => Self::Decimal(py.import("decimal")?.getattr("Decimal")?.unbind()),
-            "codec" => {
-                let (read, trusted, coerce): CodecDetails<'_> = needed()?.extract()?;
-                Self::Codec {
-                    read: read.unbind(),
-                    trusted: trusted.map(Bound::unbind),
-                    coerce: coerce.unbind(),
-                }
-            }
+            "codec" => Self::Codec(needed()?.clone().unbind()),
             "decode" => {
                 let (decode, json_like): (Bound<'_, PyAny>, bool) = needed()?.extract()?;
                 Self::Decode {
@@ -130,40 +118,9 @@ enum Plain {
     Text,
 }
 
-/// How a codec field is read: the codec's reader, the class of a value kept as it is, and how any
-/// other value is coerced to the field's type.
-type CodecDetails<'py> = (
-    Bound<'py, PyAny>,
-    Option<Bound<'py, PyAny>>,
-    Bound<'py, PyAny>,
-);
-
-/// The text of a field: a slice of a row read natively, or a string from Python.
-enum Cell<'a, 'py> {
-    Slice(&'a str),
-    Object(Bound<'py, PyAny>),
-}
-
-impl<'py> Cell<'_, 'py> {
-    /// The text of the field, unless it is not a string that can be read as UTF-8.
-    fn text(&self) -> Option<&str> {
-        match self {
-            Cell::Slice(text) => Some(text),
-            Cell::Object(object) => object.cast::<PyString>().ok()?.to_str().ok(),
-        }
-    }
-
-    /// The field as a Python object.
-    fn object(&self, py: Python<'py>) -> Bound<'py, PyAny> {
-        match self {
-            Cell::Slice(text) => PyString::new(py, text).into_any(),
-            Cell::Object(object) => object.clone(),
-        }
-    }
-}
-
 /// A field of a record held in one column, and how it is read from that column's text.
 struct Field {
+    name: Py<PyString>,
     column: usize,
     lane: Lane,
     none: Option<String>,
@@ -176,20 +133,16 @@ impl Field {
     fn read<'py>(
         &self,
         py: Python<'py>,
-        cell: &Cell<'_, 'py>,
+        text: &str,
         line_number: Option<u64>,
         file_name: Option<&str>,
         decode_error: &Bound<'py, PyType>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let Some(text) = cell.text() else {
-            let unreadable = PyValueError::new_err("The text is not valid UTF-8!");
-            return Err(self.unreadable(py, "?", line_number, file_name, Some(unreadable)));
-        };
         if self.none.as_deref() == Some(text) {
             return Ok(py.None().into_bound(py));
         }
         let read = match &self.lane {
-            Lane::Text => Some(Ok(cell.object(py))),
+            Lane::Text => Some(Ok(PyString::new(py, text).into_any())),
             Lane::Int => int(py, text).map(Ok),
             Lane::Float => float(text).map(|value| Ok(PyFloat::new(py, value).into_any())),
             Lane::Bool => {
@@ -201,7 +154,7 @@ impl Field {
                 }
                 Plain::Int => int(py, text).map(Ok),
                 Plain::Float => float(text).map(|value| Ok(PyFloat::new(py, value).into_any())),
-                Plain::Text => Some(Ok(cell.object(py))),
+                Plain::Text => Some(Ok(PyString::new(py, text).into_any())),
             }),
             Lane::Lookup(table) => table.get(text).map(|value| Ok(value.bind(py).clone())),
             Lane::Date => Some(read_date(py, text)),
@@ -214,11 +167,7 @@ impl Field {
             } => crate::text::uuid(text)
                 .map(|value| build_uuid(py, *alloc, class.bind(py), unknown.bind(py), value)),
             Lane::Decimal(decimal) => Some(decimal.bind(py).call1((text,))),
-            Lane::Codec {
-                read,
-                trusted,
-                coerce,
-            } => Some(codec(py, cell, read, trusted.as_ref(), coerce)),
+            Lane::Codec(read) => Some(read.bind(py).call1((text,))),
             Lane::Decode { decode, json_like } => Some(decode_json(
                 py,
                 text,
@@ -256,22 +205,6 @@ impl Field {
         ));
         error.set_cause(py, cause);
         error
-    }
-}
-
-/// Reads text with a codec, keeping a value of the field's class as it is and coercing any other
-/// value to the field's type.
-fn codec<'py>(
-    py: Python<'py>,
-    cell: &Cell<'_, 'py>,
-    read: &Py<PyAny>,
-    trusted: Option<&Py<PyAny>>,
-    coerce: &Py<PyAny>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let value = read.bind(py).call1((cell.object(py),))?;
-    match trusted {
-        Some(trusted) if value.get_type().is(trusted.bind(py)) => Ok(value),
-        _ => coerce.bind(py).call1((value,)),
     }
 }
 
@@ -410,24 +343,15 @@ fn float(text: &str) -> Option<f64> {
     }
 }
 
-/// Where the value of a field of a record comes from.
-enum Origin {
-    /// A field held in one column, read by the field at an index.
-    Column(usize),
-    /// The columns no other field takes, as a tuple of text.
-    Extra,
-    /// A field read from the whole row by Python, e.g. one counted across many columns.
-    Row(Py<PyString>),
-}
-
-/// How the value of a field is handed to the record.
-enum Pass {
-    /// As the next positional argument of the record type.
-    Positional,
-    /// As a keyword argument of the record type.
-    Keyword(Py<PyString>),
-    /// Set on the record once it is built, for a field the record type does not take.
-    After(Py<PyString>),
+/// Where the fields of a record go as they are read.
+enum Target<'py> {
+    /// Onto a record allocated without its `__init__`, as its generated `__init__` would set them.
+    Record(Bound<'py, PyAny>),
+    /// Into the keyword arguments of the record type, or aside for a field it does not take.
+    Arguments(
+        Bound<'py, PyDict>,
+        Vec<(Bound<'py, PyString>, Bound<'py, PyAny>)>,
+    ),
 }
 
 /// Builds records of one type from rows of text.
@@ -439,20 +363,21 @@ enum Pass {
 pub struct RecordBuilder {
     record_type: Py<PyType>,
     record_name: String,
-    alloc: Option<ffi::allocfunc>,
-    post_init: Option<Py<PyAny>>,
+    direct: Option<(ffi::allocfunc, Option<Py<PyAny>>)>,
+    init: HashSet<String>,
     fields: Vec<Field>,
-    slots: Vec<(Origin, Pass)>,
     width: usize,
-    extra: Option<(Vec<usize>, usize)>,
+    extra: Option<(Py<PyString>, Vec<usize>)>,
     row_fields: Option<Py<PyAny>>,
     file_name: Option<String>,
     decode_error: Py<PyType>,
 }
 
-/// The description of a field held in one column that Python hands the builder: its column, its
-/// lane and the details of the lane, its text for None, and how it and its column are named.
+/// The description of a field held in one column that Python hands the builder: its name, its
+/// column, its lane and the details of the lane, its text for None, and how it and its column are
+/// named in errors.
 type FieldSpec<'py> = (
+    Bound<'py, PyString>,
     usize,
     String,
     Option<String>,
@@ -464,26 +389,23 @@ type FieldSpec<'py> = (
 #[pymethods]
 impl RecordBuilder {
     #[new]
-    #[pyo3(signature = (
-        record_type, direct, fields, slots, width, extra, row_fields, file_name, decode_error
-    ))]
+    #[pyo3(signature = (record_type, fields, init, width, extra, row_fields, file_name))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         record_type: Bound<'_, PyType>,
-        direct: bool,
         fields: Vec<FieldSpec<'_>>,
-        slots: Vec<(Bound<'_, PyString>, i64, String)>,
+        init: Option<Vec<String>>,
         width: usize,
-        extra: Option<(Vec<usize>, usize)>,
+        extra: Option<(Bound<'_, PyString>, Vec<usize>)>,
         row_fields: Option<Bound<'_, PyAny>>,
         file_name: Option<String>,
-        decode_error: Bound<'_, PyType>,
     ) -> PyResult<Self> {
         let py = record_type.py();
         let fields = fields
             .into_iter()
-            .map(|(column, lane, none, details, label, place)| {
+            .map(|(name, column, lane, none, details, label, place)| {
                 Ok(Field {
+                    name: name.unbind(),
                     column,
                     lane: Lane::new(py, &lane, details.as_ref())?,
                     none,
@@ -492,47 +414,28 @@ impl RecordBuilder {
                 })
             })
             .collect::<PyResult<Vec<_>>>()?;
-        let slots = slots
-            .into_iter()
-            .map(|(name, source, pass)| {
-                let source = match source {
-                    -1 => Origin::Extra,
-                    -2 => Origin::Row(name.clone().unbind()),
-                    index => Origin::Column(usize::try_from(index).map_err(|_| {
-                        PyValueError::new_err(format!("Unknown source of field '{name}'!"))
-                    })?),
-                };
-                let pass = match pass.as_str() {
-                    "positional" => Pass::Positional,
-                    "keyword" => Pass::Keyword(name.unbind()),
-                    "after" => Pass::After(name.unbind()),
-                    _ => return Err(PyValueError::new_err(format!("Unknown pass '{pass}'!"))),
-                };
-                Ok((source, pass))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-        let alloc = if direct {
-            Some(alloc_of(&record_type)?)
-        } else {
-            None
-        };
-        let post_init = if direct {
-            record_type.getattr("__post_init__").ok().map(Bound::unbind)
-        } else {
-            None
+        let direct = match &init {
+            Some(_) => None,
+            None => Some((
+                alloc_of(&record_type)?,
+                record_type.getattr("__post_init__").ok().map(Bound::unbind),
+            )),
         };
         Ok(Self {
             record_name: record_type.name()?.to_string(),
             record_type: record_type.unbind(),
-            alloc,
-            post_init,
+            direct,
+            init: init.unwrap_or_default().into_iter().collect(),
             fields,
-            slots,
             width,
-            extra,
+            extra: extra.map(|(name, columns)| (name.unbind(), columns)),
             row_fields: row_fields.map(Bound::unbind),
             file_name,
-            decode_error: decode_error.unbind(),
+            decode_error: py
+                .import("msgspec")?
+                .getattr("DecodeError")?
+                .cast_into::<PyType>()?
+                .unbind(),
         })
     }
 
@@ -541,10 +444,11 @@ impl RecordBuilder {
     fn build<'py>(
         &self,
         py: Python<'py>,
-        row: &Bound<'py, PyList>,
+        row: &Bound<'py, PyAny>,
         line_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let cells: Vec<Cell<'_, 'py>> = row.iter().map(Cell::Object).collect();
+        let row: Vec<String> = row.extract()?;
+        let cells: Vec<&str> = row.iter().map(String::as_str).collect();
         self.build_cells(py, &cells, line_number)
     }
 }
@@ -554,7 +458,7 @@ impl RecordBuilder {
     fn build_cells<'py>(
         &self,
         py: Python<'py>,
-        cells: &[Cell<'_, 'py>],
+        cells: &[&str],
         line_number: Option<u64>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let found = cells.len();
@@ -572,76 +476,85 @@ impl RecordBuilder {
                 self.record_name,
             )));
         }
-        let decode_error = self.decode_error.bind(py);
-        let row_values = match &self.row_fields {
-            Some(row_fields) => {
-                let row = PyList::new(py, cells.iter().map(|cell| cell.object(py)))?;
-                Some(row_fields.bind(py).call1((row, line_number))?)
-            }
-            None => None,
-        };
-        let allocated = match self.alloc {
+        let mut target = match &self.direct {
             // SAFETY: `alloc` is the record type's own `tp_alloc`, called with that type.
-            Some(alloc) => Some(unsafe {
+            Some((alloc, _)) => Target::Record(unsafe {
                 Bound::from_owned_ptr_or_err(py, alloc(self.record_type.as_ptr().cast(), 0))?
             }),
-            None => None,
+            None => Target::Arguments(PyDict::new(py), Vec::new()),
         };
-        let mut positional: Vec<Bound<'py, PyAny>> = Vec::new();
-        let mut keywords: Option<Bound<'py, PyDict>> = None;
-        let mut after: Vec<(&Py<PyString>, Bound<'py, PyAny>)> = Vec::new();
-        for (origin, pass) in &self.slots {
-            let value = match origin {
-                Origin::Column(index) => {
-                    let field = &self.fields[*index];
-                    let cell = &cells[field.column];
-                    field.read(py, cell, line_number, file_name, decode_error)?
-                }
-                Origin::Extra => {
-                    let (columns, rest) = self
-                        .extra
-                        .as_ref()
-                        .map_or((&[][..], found), |extra| (extra.0.as_slice(), extra.1));
-                    let texts: Vec<Bound<'py, PyAny>> = columns
-                        .iter()
-                        .copied()
-                        .chain(rest..found)
-                        .map(|column| cells[column].object(py))
-                        .collect();
-                    PyTuple::new(py, texts)?.into_any()
-                }
-                Origin::Row(name) => match &row_values {
-                    Some(values) => values.get_item(name.bind(py))?,
-                    None => return Err(PyValueError::new_err("No fields are read from rows!")),
-                },
-            };
-            match (pass, &allocated) {
-                (Pass::After(name), Some(record)) => set_field(record, name.bind(py), &value)?,
-                (Pass::After(name), None) => after.push((name, value)),
-                (Pass::Positional, _) => positional.push(value),
-                (Pass::Keyword(name), _) => keywords
-                    .get_or_insert_with(|| PyDict::new(py))
-                    .set_item(name.bind(py), value)?,
+        if let Some(row_fields) = &self.row_fields {
+            let row = PyList::new(py, cells)?;
+            let values = row_fields.bind(py).call1((row, line_number))?;
+            for (name, value) in values.cast::<PyDict>()?.iter() {
+                self.place(&mut target, name.cast::<PyString>()?, value)?;
             }
         }
-        let record = match allocated {
-            Some(record) => record,
-            None => self
-                .record_type
-                .bind(py)
-                .call(PyTuple::new(py, positional)?, keywords.as_ref())
-                .map_err(|error| self.unbuildable(py, error, line_number))?,
-        };
-        for (name, value) in after {
-            set_field(&record, name.bind(py), &value)?;
+        let decode_error = self.decode_error.bind(py);
+        for field in &self.fields {
+            let value = field.read(
+                py,
+                cells[field.column],
+                line_number,
+                file_name,
+                decode_error,
+            )?;
+            self.place(&mut target, field.name.bind(py), value)?;
         }
-        if let Some(post_init) = &self.post_init {
-            post_init
-                .bind(py)
-                .call1((&record,))
-                .map_err(|error| self.unbuildable(py, error, line_number))?;
+        if let Some((name, columns)) = &self.extra {
+            let texts: Vec<Bound<'py, PyString>> = columns
+                .iter()
+                .copied()
+                .chain(self.width..found)
+                .map(|column| PyString::new(py, cells[column]))
+                .collect();
+            self.place(
+                &mut target,
+                name.bind(py),
+                PyTuple::new(py, texts)?.into_any(),
+            )?;
         }
-        Ok(record)
+        match target {
+            Target::Record(record) => {
+                if let Some((_, Some(post_init))) = &self.direct {
+                    post_init
+                        .bind(py)
+                        .call1((&record,))
+                        .map_err(|error| self.unbuildable(py, error, line_number))?;
+                }
+                Ok(record)
+            }
+            Target::Arguments(kwargs, after) => {
+                let record = self
+                    .record_type
+                    .bind(py)
+                    .call((), Some(&kwargs))
+                    .map_err(|error| self.unbuildable(py, error, line_number))?;
+                for (name, value) in after {
+                    set_field(&record, &name, &value)?;
+                }
+                Ok(record)
+            }
+        }
+    }
+
+    /// Hands the value of a field to where the record's fields go.
+    fn place<'py>(
+        &self,
+        target: &mut Target<'py>,
+        name: &Bound<'py, PyString>,
+        value: Bound<'py, PyAny>,
+    ) -> PyResult<()> {
+        match target {
+            Target::Record(record) => set_field(record, name, &value),
+            Target::Arguments(kwargs, _) if self.init.contains(name.to_str()?) => {
+                kwargs.set_item(name, value)
+            }
+            Target::Arguments(_, after) => {
+                after.push((name.clone(), value));
+                Ok(())
+            }
+        }
     }
 
     /// Notes the record and line an error building a record was raised for.
@@ -822,7 +735,7 @@ impl RowReader {
                     }
                 }
                 Some(Event::Row { line, row }) => {
-                    let cells: Vec<Cell<'_, 'py>> = row.iter().map(Cell::Slice).collect();
+                    let cells: Vec<&str> = row.iter().collect();
                     return builder.build_cells(py, &cells, Some(line)).map(Some);
                 }
             }

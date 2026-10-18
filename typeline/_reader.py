@@ -11,7 +11,6 @@ from datetime import time
 from decimal import Decimal
 from enum import Enum
 from enum import Flag
-from functools import partial
 from inspect import Parameter
 from inspect import signature
 from io import StringIO
@@ -31,8 +30,6 @@ from typing import get_args
 from typing import get_origin
 from uuid import UUID
 
-from msgspec import DecodeError
-from msgspec import convert
 from msgspec.json import Decoder as JSONDecoder
 from typing_extensions import Self
 from typing_extensions import TypedDict
@@ -51,7 +48,6 @@ from ._data_types import accepts_none
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
-from ._data_types import is_text
 from ._data_types import strip_optional
 from ._data_types import type_name
 from ._files import on_line
@@ -80,12 +76,12 @@ NATIVE_LANES: dict[type, str] = {
 PLAIN_LANES: frozenset[str] = frozenset({"bool", "float", "int", "text"})
 """The lanes of the plain types a union of them may hold."""
 
-POSITIONAL: frozenset[Any] = frozenset({Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD})
-"""The kinds of parameter a field may be passed to positionally."""
+BY_KEYWORD: frozenset[Any] = frozenset({Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY})
+"""The kinds of parameter a field may be passed to by keyword."""
 
-FieldSpec: TypeAlias = tuple[int, str, str | None, Any, str, str]
-"""How the native engine reads a field: its column, its lane and the details of the lane, its
-text for None, and how the field and its column are named in errors."""
+FieldSpec: TypeAlias = tuple[str, int, str, str | None, Any, str, str]
+"""How the native engine reads a field: its name, its column, its lane and the details of the
+lane, its text for None, and how the field and its column are named in errors."""
 
 
 class ReaderOptions(TypedDict, total=False, closed=True):
@@ -158,7 +154,6 @@ class DelimitedDataReader(
         self._handle: TextIO = handle
         name = getattr(handle, "name", None)
         self._file_name: str | None = name if isinstance(name, str) else None
-        self._record_line: int = 0
         self._record_type: type[RecordType] = record_type
         if isinstance(comment_prefixes, str):
             raise TypeError(
@@ -176,9 +171,7 @@ class DelimitedDataReader(
         self._column_of: dict[str, str] = name_columns(
             record_type, self._field_type_map, self._extra_field, self._counters, rename
         )
-        self._named: list[str] = [name for name in self._field_type_map if name in self._column_of]
-        self._header: list[str] = [self._column_of[name] for name in self._named]
-        self._columns: list[str] = [
+        expected: list[str] = [
             column
             for name in self._field_type_map
             if name != self._extra_field
@@ -200,42 +193,52 @@ class DelimitedDataReader(
         )
 
         # Match a header's columns to fields by name, so the columns may come in any order.
-        self._positions: list[int] | None = None
-        self._extra_positions: list[int] = []
         found: list[str] | None = None
+        at: int | None = None
         if header and (first := self._rows.read_row()) is not None:
-            found, self._record_line = first
-        columns: set[str] = set(self._columns)
+            found, at = first
+        columns: set[str] = set(expected)
         if found is not None:
             repeated: list[str] = sorted(
                 name for name, count in Counter(found).items() if count > 1 and name in columns
             )
             if repeated:
                 raise ValueError(
-                    f"Columns of header repeat a name{on_line(self._record_line, self._file_name)}!"
+                    f"Columns of header repeat a name{on_line(at, self._file_name)}!"
                     + f" Header: {found}. Repeated in header: {repeated}."
                 )
             present: set[str] = set(found)
-            missing: list[str] = [name for name in self._columns if name not in present]
+            missing: list[str] = [name for name in expected if name not in present]
             unexpected: list[str] = [name for name in found if name not in columns]
             if missing or (unexpected and self._extra_field is None):
                 raise ValueError(
                     f"Columns of header do not match fields of {record_type.__name__}"
-                    + f"{on_line(self._record_line, self._file_name)}! Header: {found}."
-                    + f" Columns of {record_type.__name__}: {self._columns}."
+                    + f"{on_line(at, self._file_name)}! Header: {found}."
+                    + f" Columns of {record_type.__name__}: {expected}."
                     + (f" Missing from header: {missing}." if missing else "")
                     + (f" Unexpected in header: {unexpected}." if unexpected else "")
                 )
-        layout: list[str] = self._columns if found is None else found
-        self._width: int = len(layout)
+        layout: list[str] = expected if found is None else found
         self._counters.locate(layout)
-        if self._counters or layout[: len(self._header)] != self._header:
-            index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
-            self._positions = [index_of[name] for name in self._header]
-            self._extra_positions = [
-                index for index, name in enumerate(layout) if name not in columns
-            ]
-        self._builder: RecordBuilder = self._record_builder(codecs)
+        index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
+        counters, file_name = self._counters, self._file_name
+        self._builder: RecordBuilder = RecordBuilder(
+            record_type,
+            [
+                self._field_spec(name, index_of[column], codecs)
+                for name, column in self._column_of.items()
+            ],
+            init_fields(record_type, list(self._field_type_map)),
+            len(layout),
+            None
+            if self._extra_field is None
+            else (
+                self._extra_field,
+                [index for index, name in enumerate(layout) if name not in columns],
+            ),
+            (lambda row, line: counters.read(row, line, file_name)) if counters else None,
+            file_name,
+        )
         self._rows.bind(self._builder)
 
     @override
@@ -255,15 +258,6 @@ class DelimitedDataReader(
         self.close()
         return None
 
-    def _convert_hook(self, type_: Any, obj: Any) -> Any:
-        """Pass through values a codec already built, and hand other custom types to dec_hook."""
-        kind = get_origin(type_) or type_
-        if isinstance(kind, type) and isinstance(obj, kind):
-            return obj
-        if self._dec_hook is not None:
-            return self._dec_hook(type_, obj)
-        raise TypeError(f"Expected {type_name(type_)}, got {type(obj).__name__}")
-
     def _field_spec(self, name: str, column: int, codecs: Codecs) -> FieldSpec:
         """Decide how the native engine reads a field from the text of its column."""
         field_type = self._field_type_map[name]
@@ -274,61 +268,22 @@ class DelimitedDataReader(
         codec = find_codec(field_type, codecs)
         if codec is not None:
             missing = none if none is None or codec.missing is None else codec.missing
-            origin = get_origin(kind) or kind
-            trusted = origin if isinstance(origin, type) else None
-            coerce = partial(
-                convert, type=field_type, strict=False, str_keys=True, dec_hook=self._convert_hook
-            )
-            return (column, "codec", missing, (codec.from_text, trusted, coerce), label, place)
+            return (name, column, "codec", missing, codec.from_text, label, place)
         lane = next((lane for t, lane in NATIVE_LANES.items() if t is kind), None)
         if lane is not None:
-            return (column, lane, none, None, label, place)
+            return (name, column, lane, none, None, label, place)
         members = plain_members(kind)
         if members is not None:
-            return (column, "union", none, members, label, place)
+            return (name, column, "union", none, members, label, place)
         table = lookup_table(kind)
         if table is not None:
-            return (column, "lookup", none, table, label, place)
+            return (name, column, "lookup", none, table, label, place)
         try:
-            decode = JSONDecoder(field_type, strict=False, dec_hook=self._convert_hook).decode
+            decode = JSONDecoder(field_type, strict=False, dec_hook=self._dec_hook).decode
         except TypeError as exception:
             raise TypeError(f"Cannot read {label}, which msgspec cannot decode!") from exception
-        return (column, "decode", none, (decode, not is_text(field_type)), label, place)
-
-    def _record_builder(self, codecs: Codecs) -> RecordBuilder:
-        """Build the native engine that reads a row's columns into a record."""
-        positions = self._positions
-        fields = [
-            self._field_spec(name, index if positions is None else positions[index], codecs)
-            for index, name in enumerate(self._named)
-        ]
-        index_of: dict[str, int] = {name: index for index, name in enumerate(self._named)}
-        names = list(self._field_type_map)
-        direct = builds_directly(self._record_type, names)
-        plan = (
-            [(name, "after") for name in names] if direct else init_plan(self._record_type, names)
-        )
-        slots = [
-            (name, index_of.get(name, -1 if name == self._extra_field else -2), how)
-            for name, how in plan
-        ]
-        extra = (
-            None
-            if self._extra_field is None
-            else (self._extra_positions, len(self._header) if positions is None else self._width)
-        )
-        counters, file_name = self._counters, self._file_name
-        return RecordBuilder(
-            self._record_type,
-            direct,
-            fields,
-            slots,
-            self._width,
-            extra,
-            (lambda row, line: counters.read(row, line, file_name)) if counters else None,
-            file_name,
-            DecodeError,
-        )
+        json_like = not (isinstance(kind, type) and issubclass(kind, str))
+        return (name, column, "decode", none, (decode, json_like), label, place)
 
     @override
     def __iter__(self) -> Iterator[RecordType]:
@@ -497,43 +452,17 @@ def lookup_table(kind: Any) -> dict[str, Any] | None:
     return table
 
 
-def builds_directly(record_type: type[Any], names: list[str]) -> bool:
-    """Return whether a record type's fields may be set directly, as its generated `__init__` would.
+def init_fields(record_type: type[Any], names: list[str]) -> list[str] | None:
+    """Return the fields passed by keyword to a record type's `__init__`, or None to skip it.
 
     A dataclass's generated `__init__` is compiled from a string, unlike one written in a module,
     and only sets the fields it takes, unless it takes a parameter that is not a field, e.g. an
-    `InitVar`, which it hands on to `__post_init__`.
+    `InitVar`, which it hands on to `__post_init__`. A record of a type that uses it is built as
+    it would build it, with its fields set directly. A field that `__init__` does not take, e.g.
+    one with `init=False`, is set once the record is built.
     """
+    parameters = signature(record_type).parameters
     code = getattr(record_type.__init__, "__code__", None)
-    return (
-        code is not None
-        and code.co_filename == "<string>"
-        and set(signature(record_type).parameters) <= set(names)
-    )
-
-
-def init_plan(record_type: type[Any], names: list[str]) -> list[tuple[str, str]]:
-    """Order the fields of a record by how they are handed to its type when it is built.
-
-    Fields are passed positionally while the parameters of the type follow them, then by keyword,
-    and a field the type does not take, e.g. one with `init=False`, is set once it is built.
-    """
-    fields = set(names)
-    positional: list[str] = []
-    keyword: list[str] = []
-    in_order = True
-    for parameter in signature(record_type).parameters.values():
-        passable = parameter.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
-        if in_order and parameter.name in fields and parameter.kind in POSITIONAL:
-            positional.append(parameter.name)
-        elif parameter.name in fields and passable:
-            keyword.append(parameter.name)
-            in_order = False
-        else:
-            in_order = False
-    passed = {*positional, *keyword}
-    return [
-        *((name, "positional") for name in positional),
-        *((name, "keyword") for name in keyword),
-        *((name, "after") for name in names if name not in passed),
-    ]
+    if code is not None and code.co_filename == "<string>" and set(parameters) <= set(names):
+        return None
+    return [name for name in names if name in parameters and parameters[name].kind in BY_KEYWORD]
