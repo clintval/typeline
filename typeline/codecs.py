@@ -179,3 +179,8 @@ def nullable(codec: FieldCodec[ValueType], missing: str) -> FieldCodec[ValueType
         return missing if value is None else codec.into_text(value)
 
     return FieldCodec(from_text=from_text, into_text=into_text, missing=missing)
+
+
+def __dir__() -> list[str]:
+    """List the public names of the module, leaving out the names it imports."""
+    return sorted(__all__)
