@@ -1,5 +1,8 @@
 //! Writing records natively as lines of delimited text.
 
+use std::collections::HashSet;
+use std::sync::OnceLock;
+
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple, PyType};
@@ -75,6 +78,31 @@ impl Counted {
     }
 }
 
+impl Out {
+    /// Decides how a field is written from how Python describes it, and the details of that.
+    fn new(out: &str, details: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let needed = || {
+            details.ok_or_else(|| {
+                PyValueError::new_err(format!("The output '{out}' needs its details!"))
+            })
+        };
+        Ok(match out {
+            "value" => Self::Value,
+            "codec" => Self::Codec(needed()?.clone().unbind()),
+            "counts" => {
+                let (index_of, columns, enum_name): (Bound<'_, PyDict>, Vec<String>, _) =
+                    needed()?.extract()?;
+                Self::Counts(Counted {
+                    index_of: index_of.unbind(),
+                    columns,
+                    enum_name,
+                })
+            }
+            _ => return Err(PyValueError::new_err(format!("Unknown output '{out}'!"))),
+        })
+    }
+}
+
 /// A field of a record and how it is written.
 struct OutField {
     name: Py<PyString>,
@@ -90,6 +118,29 @@ impl OutField {
             return cause;
         }
         let error = PyValueError::new_err(self.unwritable.clone());
+        error.set_cause(py, Some(cause));
+        error
+    }
+}
+
+/// A field that holds columns by name, each written as a value of one type.
+struct Named {
+    name: Py<PyString>,
+    out: Out,
+    none: Py<PyString>,
+    label: String,
+    taken: HashSet<String>,
+    keys: OnceLock<Vec<String>>,
+}
+
+impl Named {
+    /// Explains that the value of a column of this field could not be written, and why.
+    fn unwritable(&self, py: Python<'_>, key: &str, cause: PyErr) -> PyErr {
+        if !cause.is_instance_of::<PyException>(py) {
+            return cause;
+        }
+        let error =
+            PyValueError::new_err(format!("Could not write {} in column '{key}'!", self.label));
         error.set_cause(py, Some(cause));
         error
     }
@@ -122,6 +173,7 @@ pub struct RecordFormatter {
     record_name: String,
     fields: Vec<OutField>,
     extra: Option<Py<PyString>>,
+    named: Option<Named>,
     encode: Py<PyAny>,
     delimiter: char,
     line_end: String,
@@ -144,13 +196,15 @@ type OutFieldSpec<'py> = (
 impl RecordFormatter {
     #[new]
     #[pyo3(signature = (
-        record_type, fields, extra, encode, delimiter, line_end, comment_prefixes, quoting, labels
+        record_type, fields, extra, named, encode, delimiter, line_end, comment_prefixes, quoting,
+        labels
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         record_type: Bound<'_, PyType>,
         fields: Vec<OutFieldSpec<'_>>,
         extra: Option<Bound<'_, PyString>>,
+        named: Option<(OutFieldSpec<'_>, Vec<String>)>,
         encode: Bound<'_, PyAny>,
         delimiter: char,
         line_end: String,
@@ -161,38 +215,31 @@ impl RecordFormatter {
         let fields = fields
             .into_iter()
             .map(|(name, out, none, details, unwritable)| {
-                let needed = || {
-                    details.as_ref().ok_or_else(|| {
-                        PyValueError::new_err(format!("The output '{out}' needs its details!"))
-                    })
-                };
-                let out = match out.as_str() {
-                    "value" => Out::Value,
-                    "codec" => Out::Codec(needed()?.clone().unbind()),
-                    "counts" => {
-                        let (index_of, columns, enum_name): (Bound<'_, PyDict>, Vec<String>, _) =
-                            needed()?.extract()?;
-                        Out::Counts(Counted {
-                            index_of: index_of.unbind(),
-                            columns,
-                            enum_name,
-                        })
-                    }
-                    _ => return Err(PyValueError::new_err(format!("Unknown output '{out}'!"))),
-                };
                 Ok(OutField {
                     name: name.unbind(),
-                    out,
+                    out: Out::new(&out, details.as_ref())?,
                     none: none.unbind(),
                     unwritable,
                 })
             })
             .collect::<PyResult<Vec<_>>>()?;
+        let named = match named {
+            Some(((name, out, none, details, label), taken)) => Some(Named {
+                name: name.unbind(),
+                out: Out::new(&out, details.as_ref())?,
+                none: none.unbind(),
+                label,
+                taken: taken.into_iter().collect(),
+                keys: OnceLock::new(),
+            }),
+            None => None,
+        };
         Ok(Self {
             record_name: record_type.name()?.to_string(),
             record_type: record_type.unbind(),
             fields,
             extra: extra.map(Bound::unbind),
+            named,
             encode: encode.unbind(),
             delimiter,
             line_end,
@@ -207,6 +254,15 @@ impl RecordFormatter {
         let mut line = String::new();
         self.append(py, record, &mut line)?;
         Ok(line)
+    }
+
+    /// The names of the columns a field holds by name, as the first record written named them:
+    /// None before then, and none at all for a record without such a field.
+    fn extra_names(&self) -> Option<Vec<String>> {
+        match &self.named {
+            Some(named) => named.keys.get().cloned(),
+            None => Some(Vec::new()),
+        }
     }
 
     /// Format texts as one line, e.g. a header.
@@ -269,16 +325,21 @@ impl RecordFormatter {
                 record.get_type().name()?
             )));
         }
-        let pieces = self.pieces(py, record)?;
-        self.join(py, &pieces, line)
+        let (pieces, keys) = self.pieces(py, record)?;
+        self.join(py, &pieces, line)?;
+        if let (Some(named), Some(keys)) = (&self.named, keys) {
+            let _ = named.keys.set(keys);
+        }
+        Ok(())
     }
 
-    /// Writes each field of a record into its text.
+    /// Writes each field of a record into its text, with the names of the columns a field holds
+    /// by name when this is the first record to name them.
     fn pieces<'py>(
         &self,
         py: Python<'py>,
         record: &Bound<'py, PyAny>,
-    ) -> PyResult<Vec<Piece<'py>>> {
+    ) -> PyResult<(Vec<Piece<'py>>, Option<Vec<String>>)> {
         let mut pieces: Vec<Piece<'py>> = Vec::with_capacity(self.fields.len());
         for field in &self.fields {
             let name = field.name.bind(py);
@@ -289,16 +350,8 @@ impl RecordFormatter {
                         pieces.push(self.native(py, &count)?);
                     }
                 }
-                _ if value.is_none() => pieces.push(Piece::Object(field.none.bind(py).clone())),
-                Out::Codec(write) => {
-                    let text = write
-                        .bind(py)
-                        .call1((value,))
-                        .map_err(|error| field.unwritable(py, error))?;
-                    pieces.push(Piece::Object(as_text(text)?));
-                }
-                Out::Value => pieces.push(
-                    self.native(py, &value)
+                out => pieces.push(
+                    self.written(py, out, field.none.bind(py), value)
                         .map_err(|error| field.unwritable(py, error))?,
                 ),
             }
@@ -318,7 +371,87 @@ impl RecordFormatter {
                 pieces.push(Piece::Object(text.cast_into::<PyString>()?));
             }
         }
-        Ok(pieces)
+        let keys = match &self.named {
+            Some(named) => self.named_pieces(py, named, record, &mut pieces)?,
+            None => None,
+        };
+        Ok((pieces, keys))
+    }
+
+    /// Writes the columns a field holds by name, in the order the first record written named
+    /// them, returning their names when this record is the first.
+    fn named_pieces<'py>(
+        &self,
+        py: Python<'py>,
+        named: &Named,
+        record: &Bound<'py, PyAny>,
+        pieces: &mut Vec<Piece<'py>>,
+    ) -> PyResult<Option<Vec<String>>> {
+        let name = named.name.bind(py);
+        let held = record.getattr(name)?;
+        let Ok(values) = held.cast::<PyDict>() else {
+            return Err(PyValueError::new_err(format!(
+                "The NamedExtraColumns field '{name}' of {} must hold a dict, but holds {}!",
+                self.record_name,
+                held.repr()?
+            )));
+        };
+        let found = values
+            .keys()
+            .iter()
+            .map(|key| key.extract::<String>())
+            .collect::<PyResult<Vec<String>>>()?;
+        let first = named.keys.get().is_none();
+        let taken: Vec<&String> = found
+            .iter()
+            .filter(|key| named.taken.contains(*key))
+            .collect();
+        if first && !taken.is_empty() {
+            return Err(PyValueError::new_err(format!(
+                "The NamedExtraColumns field '{name}' of {} names columns that other fields hold: \
+                 {}!",
+                self.record_name,
+                PyList::new(py, taken)?.repr()?,
+            )));
+        }
+        let keys = named.keys.get().unwrap_or(&found);
+        if !first
+            && (keys.len() != found.len()
+                || !keys.iter().all(|key| values.contains(key).unwrap_or(false)))
+        {
+            return Err(PyValueError::new_err(format!(
+                "The NamedExtraColumns field '{name}' of {} must name the columns {} of the first \
+                 record written, but names {}!",
+                self.record_name,
+                PyList::new(py, keys)?.repr()?,
+                PyList::new(py, &found)?.repr()?,
+            )));
+        }
+        for key in keys {
+            let value = values.as_any().get_item(key)?;
+            pieces.push(
+                self.written(py, &named.out, named.none.bind(py), value)
+                    .map_err(|error| named.unwritable(py, key, error))?,
+            );
+        }
+        Ok(first.then_some(found))
+    }
+
+    /// Writes a value as its none text when None, else with a codec or natively.
+    fn written<'py>(
+        &self,
+        py: Python<'py>,
+        out: &Out,
+        none: &Bound<'py, PyString>,
+        value: Bound<'py, PyAny>,
+    ) -> PyResult<Piece<'py>> {
+        if value.is_none() {
+            return Ok(Piece::Object(none.clone()));
+        }
+        match out {
+            Out::Codec(write) => Ok(Piece::Object(as_text(write.bind(py).call1((value,))?)?)),
+            _ => self.native(py, &value),
+        }
     }
 
     /// Writes a value natively, as typeline does: exact strings as they are, integers, floats,
@@ -407,7 +540,11 @@ impl RecordFormatter {
 
     /// Explains that the text at an index of a row cannot be written without quoting.
     fn unquotable(&self, py: Python<'_>, index: usize, reason: &str, text: Option<&str>) -> PyErr {
-        let label = match (self.labels.get(index), &self.extra) {
+        let extra = self
+            .extra
+            .as_ref()
+            .or(self.named.as_ref().map(|named| &named.name));
+        let label = match (self.labels.get(index), extra) {
             (Some(label), _) => label.clone(),
             (None, Some(name)) => format!("field '{}'", name.bind(py)),
             (None, None) => String::new(),

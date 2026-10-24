@@ -15,6 +15,7 @@ class RecordBuilder:
         init: list[str] | None,
         width: int,
         extra: tuple[str, list[int]] | None,
+        named: tuple[str, list[tuple[str, int, str, str | None, Any, str, str]]] | None,
         counters: list[tuple[str, list[tuple[Any, str, int]]]],
         file_name: str | None,
     ) -> None: ...
@@ -27,6 +28,7 @@ class RecordFormatter:
         record_type: type[Any],
         fields: list[tuple[str, str, str, Any, str]],
         extra: str | None,
+        named: tuple[tuple[str, str, str, Any, str], list[str]] | None,
         encode: Callable[[Any], bytes],
         delimiter: str,
         line_end: str,
@@ -36,6 +38,8 @@ class RecordFormatter:
     ) -> None: ...
     def format(self, record: object) -> str:
         """Format a record as its line of text, refusing a record of another type."""
+    def extra_names(self) -> list[str] | None:
+        """The names of the columns a field holds by name, from the first record written."""
     def line(self, texts: Sequence[str]) -> str:
         """Format texts as one line, e.g. a header."""
     def write_all(self, records: Iterable[object], write: Callable[[str], object]) -> None:

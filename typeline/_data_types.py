@@ -122,20 +122,73 @@ Example:
 """
 
 
-def extra_columns_field(record_type: type[Any], field_type_map: dict[str, Any]) -> str | None:
-    """Return the name of a record's `ExtraColumns` field, which must be its last field."""
-    names = [
-        name
-        for name, field_type in field_type_map.items()
-        if get_origin(field_type) is Annotated and EXTRA_COLUMNS_MARKER in get_args(field_type)
-    ]
-    if not names:
+class _NamedExtraColumnsMarker:
+    """Marks the field of a record that holds, by name, the columns no other field takes."""
+
+    @override
+    def __repr__(self) -> str:
+        return "NamedExtraColumns"
+
+
+NAMED_EXTRA_COLUMNS_MARKER = _NamedExtraColumnsMarker()
+"""The marker in `NamedExtraColumns` that readers and writers look for."""
+
+ColumnValueType = TypeVar("ColumnValueType")
+"""The type variable for the value of each column a `NamedExtraColumns` field holds."""
+
+NamedExtraColumns: TypeAlias = Annotated[dict[str, ColumnValueType], NAMED_EXTRA_COLUMNS_MARKER]
+"""The type of a record's last field that holds the columns no other field takes, by name.
+
+The columns are named after a header, in file order, and each is read and written as a field of
+the value type would be.
+
+Example:
+    ```python
+    @dataclass
+    class Bin:
+        size: int
+        counts: NamedExtraColumns[int] = field(default_factory=dict)
+    ```
+"""
+
+
+def _extra_columns_marker(annotation: Any) -> object | None:
+    """Return the marker of an `ExtraColumns` or `NamedExtraColumns` annotation, else None."""
+    if get_origin(annotation) is not Annotated:
         return None
-    last = list(field_type_map)[-1]
-    misplaced = [name for name in names if name != last]
-    if misplaced:
+    args = get_args(annotation)
+    return next((m for m in (EXTRA_COLUMNS_MARKER, NAMED_EXTRA_COLUMNS_MARKER) if m in args), None)
+
+
+def extra_columns_field(record_type: type[Any], field_type_map: dict[str, Any]) -> str | None:
+    """Return the name of the field that holds the columns no other field takes, if any.
+
+    Raises:
+        TypeError: if more than one field would hold them, or if the field is not the last field.
+    """
+    markers = {
+        name: marker
+        for name, field_type in field_type_map.items()
+        if (marker := _extra_columns_marker(field_type)) is not None
+    }
+    if not markers:
+        return None
+    record = record_type.__name__
+    if len(markers) > 1:
         raise TypeError(
-            f"The ExtraColumns field of {record_type.__name__} must be its last field,"
-            + f" but '{misplaced[0]}' is not!"
+            f"{record} holds the columns no other field takes in more than one field:"
+            + f" {list(markers)}!"
         )
-    return last
+    ((name, marker),) = markers.items()
+    if name != list(field_type_map)[-1]:
+        raise TypeError(
+            f"The {marker!r} field of {record} must be its last field, but '{name}' is not!"
+        )
+    return name
+
+
+def named_extra_columns_type(annotation: Any) -> Any | None:
+    """Return the value type of a `NamedExtraColumns` annotation, e.g. `int`, else None."""
+    if _extra_columns_marker(annotation) is not NAMED_EXTRA_COLUMNS_MARKER:
+        return None
+    return get_args(get_args(annotation)[0])[1]
