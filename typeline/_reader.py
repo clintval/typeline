@@ -50,6 +50,7 @@ from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
 from ._data_types import is_text
+from ._data_types import named_extra_columns_type
 from ._data_types import strip_optional
 from ._data_types import type_name
 from ._files import on_line
@@ -163,6 +164,16 @@ class DelimitedDataReader(
         # Inspect the record type, and decide once how each field is read from its text.
         self._field_type_map: dict[str, Any] = field_types(record_type)
         self._extra_field: str | None = extra_columns_field(record_type, self._field_type_map)
+        named_type: Any | None = (
+            None
+            if self._extra_field is None
+            else named_extra_columns_type(self._field_type_map[self._extra_field])
+        )
+        if named_type is not None and not header:
+            raise ValueError(
+                f"The NamedExtraColumns field '{self._extra_field}' of {record_type.__name__}"
+                + " names its columns after a header, so it cannot be read with header=False!"
+            )
         self._counters: CounterFields = CounterFields(record_type, self._field_type_map)
         self._column_of: dict[str, str] = name_columns(
             record_type, self._field_type_map, self._extra_field, self._counters, rename
@@ -211,6 +222,7 @@ class DelimitedDataReader(
                 )
         layout: list[str] = expected if found is None else found
         index_of: dict[str, int] = {name: index for index, name in enumerate(layout)}
+        others: list[int] = [index for index, name in enumerate(layout) if name not in columns]
         builder = RecordBuilder(
             record_type,
             [
@@ -220,10 +232,23 @@ class DelimitedDataReader(
             init_fields(record_type, list(self._field_type_map)),
             len(layout),
             None
-            if self._extra_field is None
+            if self._extra_field is None or named_type is not None
+            else (self._extra_field, others),
+            None
+            if self._extra_field is None or named_type is None
             else (
                 self._extra_field,
-                [index for index, name in enumerate(layout) if name not in columns],
+                [
+                    self._column_spec(
+                        layout[index],
+                        named_type,
+                        index,
+                        codecs,
+                        f"field '{self._extra_field}' of type {type_name(named_type)}",
+                        f" in column '{layout[index]}'",
+                    )
+                    for index in others
+                ],
             ),
             self._counters.locate(layout),
             self._file_name,
@@ -250,9 +275,18 @@ class DelimitedDataReader(
     def _field_spec(self, name: str, column: int, codecs: Codecs) -> FieldSpec:
         """Decide how the native engine reads a field from the text of its column."""
         field_type = self._field_type_map[name]
-        kind = supertype(strip_optional(field_type))
         label = f"field '{name}' of type {type_name(field_type)}"
         place = in_column(name, self._column_of[name])
+        return self._column_spec(name, field_type, column, codecs, label, place)
+
+    def _column_spec(
+        self, name: str, field_type: Any, column: int, codecs: Codecs, label: str, place: str
+    ) -> FieldSpec:
+        """Decide how the native engine reads a value of a type from the text of a column.
+
+        The value is set as `name`, and errors name it by `label` and its column by `place`.
+        """
+        kind = supertype(strip_optional(field_type))
         none = self._none_field if accepts_none(field_type) else None
         codec = find_codec(field_type, codecs)
         if codec is not None:

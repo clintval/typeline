@@ -3,6 +3,7 @@ from ._binding import SubscriptableClassmethod
 from ._comment import Comment
 from ._counter_columns import CounterColumns
 from ._data_types import ExtraColumns
+from ._data_types import NamedExtraColumns
 from ._data_types import RecordType
 from ._reader import CsvReader
 from ._reader import DelimitedDataReader
@@ -26,6 +27,7 @@ __all__ = [
     "ExtraColumns",
     "FieldCodec",
     "FixedRecordType",
+    "NamedExtraColumns",
     "ReaderOptions",
     "RecordType",
     "SubscriptableClassmethod",

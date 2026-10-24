@@ -31,6 +31,7 @@ from ._data_types import RecordType
 from ._data_types import extra_columns_field
 from ._data_types import field_types
 from ._data_types import find_codec
+from ._data_types import named_extra_columns_type
 from ._data_types import type_name
 from ._files import open_for_writing
 from ._native import RecordFormatter
@@ -120,6 +121,11 @@ class DelimitedDataWriter(
         # Inspect the record type, and decide once how each field is written into its text.
         field_type_map = field_types(record_type)
         extra_field = extra_columns_field(record_type, field_type_map)
+        named_type = (
+            None if extra_field is None else named_extra_columns_type(field_type_map[extra_field])
+        )
+        self._record_name: str = record_type.__name__
+        self._named_field: str | None = None if named_type is None else extra_field
         counters = CounterFields(record_type, field_type_map)
         column_of = name_columns(record_type, field_type_map, extra_field, counters, rename)
         layout: list[tuple[str, str]] = [
@@ -136,18 +142,22 @@ class DelimitedDataWriter(
             if name in counters:
                 fields.append((name, "counts", "", counters.written(name), ""))
                 continue
-            codec = find_codec(field_type, codecs)
-            none = codec.missing if codec is not None and codec.missing is not None else none_field
             where = in_column(name, column_of[name])
             unwritable = f"Could not write field '{name}' of type {type_name(field_type)}{where}!"
-            if codec is None:
-                fields.append((name, "value", none, None, unwritable))
-            else:
-                fields.append((name, "codec", none, codec.into_text, unwritable))
+            fields.append(_out_spec(name, field_type, codecs, none_field, unwritable))
         self._formatter: RecordFormatter = RecordFormatter(
             record_type,
             fields,
-            extra_field,
+            None if named_type is not None else extra_field,
+            None
+            if extra_field is None or named_type is None
+            else _out_spec(
+                extra_field,
+                named_type,
+                codecs,
+                none_field,
+                f"field '{extra_field}' of type {type_name(named_type)}",
+            ),
             JSONEncoder(enc_hook=enc_hook).encode,
             self.delimiter,
             linesep,
@@ -190,10 +200,16 @@ class DelimitedDataWriter(
     def write_all(self, records: Iterable[RecordType]) -> None:
         """Write every record in order, after the header when `header=True`.
 
-        The header is written as this starts, so it is written even when there are no records.
+        The header is written as this starts, so it is written even when there are no records. With
+        a `NamedExtraColumns` field, it is written with the first record, which names those columns.
         """
+        if self._header_pending and self._formatter.extra_names() is None:
+            records = iter(records)
+            first = next(records, None)
+            if first is not None:
+                self.write(first)
         if self._header_pending:
-            self.write_header()
+            self._write_header(self._formatter.extra_names() or [])
         if type(self).write is not DelimitedDataWriter[Any].write:
             for record in records:
                 self.write(record)
@@ -204,12 +220,23 @@ class DelimitedDataWriter(
         """Write the header line to the open file-like object.
 
         With `header=True`, the header is written only once, so this writes it now if it has not
-        been written yet, and otherwise does nothing.
+        been written yet, and otherwise does nothing. With a `NamedExtraColumns` field, the header
+        names the columns of the first record written, so it cannot be written before that record.
         """
         if self._writes_header and not self._header_pending:
             return
+        names = self._formatter.extra_names()
+        if names is None:
+            raise ValueError(
+                f"Cannot write the header of {self._record_name} before its first record, which"
+                + f" names the columns of its NamedExtraColumns field '{self._named_field}'!"
+            )
+        self._write_header(names)
+
+    def _write_header(self, names: list[str]) -> None:
+        """Write the header line, naming the columns of a `NamedExtraColumns` field last."""
         self._header_pending = False
-        _ = self._handle.write(self._formatter.line(self._header))
+        _ = self._handle.write(self._formatter.line([*self._header, *names]))
 
     def write_comment(self, comment: str | Comment) -> None:
         """Write a comment, e.g. one a reader sent to `on_comment`.
@@ -233,7 +260,7 @@ class DelimitedDataWriter(
         """Close all opened resources, first writing the header if it is still to be written."""
         try:
             if self._header_pending:
-                self.write_header()
+                self._write_header(self._formatter.extra_names() or [])
         finally:
             self._handle.close()
 
@@ -256,6 +283,17 @@ class DelimitedDataWriter(
         except BaseException:
             handle.close()
             raise
+
+
+def _out_spec(
+    name: str, field_type: Any, codecs: Codecs, none_field: str, unwritable: str
+) -> tuple[str, str, str, Any, str]:
+    """Describe how the native engine writes a value of a type, and how errors name it."""
+    codec = find_codec(field_type, codecs)
+    none = codec.missing if codec is not None and codec.missing is not None else none_field
+    if codec is None:
+        return (name, "value", none, None, unwritable)
+    return (name, "codec", none, codec.into_text, unwritable)
 
 
 class CsvWriter(DelimitedDataWriter[RecordType], delimiter=","):

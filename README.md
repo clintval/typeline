@@ -162,6 +162,26 @@ with TsvReader.from_path[Region](path, header=False) as reader:
     assert list(reader) == [Region("exon1", 10), Region("exon2", 20, ("0.9", "HIGH"))]
 ```
 
+A record can instead end with a `NamedExtraColumns[T]` field, which holds those columns as a `dict[str, T]` keyed by their names in the header, in file order.
+Each column is read and written as a field of type `T` would be, codecs included.
+Readers need a header to name the columns, and writers name them in the header after the other fields, as the first record written names them, so every record must name the same columns.
+
+```python
+from dataclasses import field
+
+from typeline import NamedExtraColumns
+
+@dataclass
+class Bin:
+    size: int
+    counts: NamedExtraColumns[int] = field(default_factory=dict)
+
+path.write_text("size\tall.fr\tall.rf\n187\t4123\t12\n")
+
+with TsvReader.from_path[Bin](path) as reader:
+    assert list(reader) == [Bin(187, {"all.fr": 4123, "all.rf": 12})]
+```
+
 ### Counter Columns
 
 A `CounterColumns[E]` field is a `Counter[E]` held in one column per member of the enum `E`, each named after its member's value, which must be text.

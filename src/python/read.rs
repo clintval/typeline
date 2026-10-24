@@ -120,7 +120,8 @@ enum Plain {
     Text,
 }
 
-/// A field of a record held in one column, and how it is read from that column's text.
+/// A field of a record held in one column, or one column of a field that holds columns by name,
+/// and how it is read from that column's text.
 struct Field {
     name: Py<PyString>,
     column: usize,
@@ -131,6 +132,23 @@ struct Field {
 }
 
 impl Field {
+    /// Builds the fields Python describes, deciding once how each is read.
+    fn all_of(py: Python<'_>, specs: Vec<FieldSpec<'_>>) -> PyResult<Vec<Self>> {
+        specs
+            .into_iter()
+            .map(|(name, column, lane, none, details, label, place)| {
+                Ok(Self {
+                    name: name.unbind(),
+                    column,
+                    lane: Lane::new(py, &lane, details.as_ref())?,
+                    none,
+                    label,
+                    place,
+                })
+            })
+            .collect()
+    }
+
     /// Reads the value of this field from the text of its column.
     fn read<'py>(
         &self,
@@ -398,6 +416,7 @@ pub struct RecordBuilder {
     fields: Vec<Field>,
     width: usize,
     extra: Option<(Py<PyString>, Vec<usize>)>,
+    named: Option<(Py<PyString>, Vec<Field>)>,
     counters: Vec<Counts>,
     counter_type: Py<PyAny>,
     file_name: Option<String>,
@@ -433,7 +452,7 @@ type CountsSpec<'py> = (
 #[pymethods]
 impl RecordBuilder {
     #[new]
-    #[pyo3(signature = (record_type, fields, init, width, extra, counters, file_name))]
+    #[pyo3(signature = (record_type, fields, init, width, extra, named, counters, file_name))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         record_type: Bound<'_, PyType>,
@@ -441,23 +460,16 @@ impl RecordBuilder {
         init: Option<Vec<String>>,
         width: usize,
         extra: Option<(Bound<'_, PyString>, Vec<usize>)>,
+        named: Option<(Bound<'_, PyString>, Vec<FieldSpec<'_>>)>,
         counters: Vec<CountsSpec<'_>>,
         file_name: Option<String>,
     ) -> PyResult<Self> {
         let py = record_type.py();
-        let fields = fields
-            .into_iter()
-            .map(|(name, column, lane, none, details, label, place)| {
-                Ok(Field {
-                    name: name.unbind(),
-                    column,
-                    lane: Lane::new(py, &lane, details.as_ref())?,
-                    none,
-                    label,
-                    place,
-                })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
+        let fields = Field::all_of(py, fields)?;
+        let named = match named {
+            Some((name, columns)) => Some((name.unbind(), Field::all_of(py, columns)?)),
+            None => None,
+        };
         let direct = match &init {
             Some(_) => None,
             None => Some((
@@ -473,6 +485,7 @@ impl RecordBuilder {
             fields,
             width,
             extra: extra.map(|(name, columns)| (name.unbind(), columns)),
+            named,
             counters: counters
                 .into_iter()
                 .map(|(name, members)| Counts {
@@ -565,6 +578,20 @@ impl RecordBuilder {
                 name.bind(py),
                 PyTuple::new(py, texts)?.into_any(),
             )?;
+        }
+        if let Some((name, columns)) = &self.named {
+            let values = PyDict::new(py);
+            for column in columns {
+                let value = column.read(
+                    py,
+                    cells[column.column],
+                    line_number,
+                    file_name,
+                    decode_error,
+                )?;
+                values.set_item(column.name.bind(py), value)?;
+            }
+            self.place(&mut target, name.bind(py), values.into_any())?;
         }
         match target {
             Target::Record(record) => {
