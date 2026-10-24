@@ -41,6 +41,12 @@ class RecordFormatter:
     def write_all(self, records: Iterable[object], write: Callable[[str], object]) -> None:
         """Write records to a stream, stopping at the first that cannot be written."""
 
+def read_float(text: str) -> float | None:
+    """Read a float as a float field reads one, or None when the text is not a float."""
+
+def write_float(value: float) -> str:
+    """Write a float as a float field writes one, e.g. `1.0`, `1e-6`, or `nan`."""
+
 class RowReader:
     """Reads records natively from a Python text stream, one row at a time."""
 

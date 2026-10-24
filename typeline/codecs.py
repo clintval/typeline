@@ -2,6 +2,8 @@ from collections.abc import Callable
 from collections.abc import Collection
 from collections.abc import Mapping
 from dataclasses import dataclass
+from math import isinf
+from math import isnan
 from types import MappingProxyType
 from typing import Any
 from typing import Generic
@@ -9,7 +11,10 @@ from typing import TypeAlias
 from typing import TypeVar
 from typing import overload
 
-__all__ = ["Codecs", "FieldCodec", "boolean", "delimited", "key_value", "nullable"]
+from ._native import read_float
+from ._native import write_float
+
+__all__ = ["Codecs", "FieldCodec", "boolean", "delimited", "key_value", "nan", "nullable"]
 
 ValueType = TypeVar("ValueType")
 """The type variable for the value a field codec reads from and writes into text."""
@@ -156,6 +161,52 @@ def boolean(true: str = "Y", false: str = "N") -> FieldCodec[bool]:
         return text == true
 
     return FieldCodec(from_text=from_text, into_text=lambda flag: true if flag else false)
+
+
+def nan(text: str, *, inf: str = "inf", neg_inf: str = "-inf") -> FieldCodec[float]:
+    """Build a codec for a float field that spells NaN and the infinities its own way, e.g. `?`.
+
+    Other text is read and written as a float field reads and writes it. Text that spells both
+    NaN and an infinity is read as NaN.
+
+    Args:
+        text: the text for NaN.
+        inf: the text for positive infinity.
+        neg_inf: the text for negative infinity.
+
+    Example:
+        ```pycon
+        >>> ratio = nan("?", inf="?", neg_inf="-?")
+        >>> ratio.from_text("?")
+        nan
+        >>> ratio.into_text(float("-inf"))
+        '-?'
+        >>> ratio.into_text(0.5)
+        '0.5'
+
+        ```
+    """
+
+    def from_text(found: str) -> float:
+        if found == text:
+            return float("nan")
+        if found == inf:
+            return float("inf")
+        if found == neg_inf:
+            return float("-inf")
+        value = read_float(found)
+        if value is None:
+            raise ValueError(f"Expected a float but found '{found}'!")
+        return value
+
+    def into_text(value: float) -> str:
+        if isnan(value):
+            return text
+        if isinf(value):
+            return inf if value > 0 else neg_inf
+        return write_float(value)
+
+    return FieldCodec(from_text=from_text, into_text=into_text)
 
 
 def nullable(codec: FieldCodec[ValueType], missing: str) -> FieldCodec[ValueType | None]:
