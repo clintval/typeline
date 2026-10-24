@@ -366,6 +366,12 @@ fn float(text: &str) -> Option<f64> {
     }
 }
 
+/// Reads a float as a float field reads one, or None when the text is not a float.
+#[pyfunction]
+pub fn read_float(text: &str) -> Option<f64> {
+    float(text)
+}
+
 /// Where the fields of a record go as they are read.
 enum Target<'py> {
     /// Onto a record allocated without its `__init__`, as its generated `__init__` would set them.

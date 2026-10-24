@@ -257,6 +257,7 @@ Dates, times, UUIDs, decimals, enums, and literals are written as their usual te
 For any other text format, a `FieldCodec` reads a field from its text and writes it back, chosen by the field's type.
 The value a codec reads is the field's value as it is, so a codec returns the field's type.
 Helpers in `typeline.codecs` cover common formats.
+Among them, `nan` gives NaN and the infinities their own text, like `?`, where a float field would write `nan`, `inf`, and `-inf`.
 
 ```python
 from datetime import date

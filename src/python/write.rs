@@ -443,3 +443,17 @@ fn json_text(json: &[u8]) -> Option<String> {
         _ => std::str::from_utf8(json).ok().map(str::to_string),
     }
 }
+
+/// Writes a float as a float field writes one, e.g. `1.0`, `1e-6`, or `nan`.
+#[pyfunction]
+pub fn write_float(value: f64) -> String {
+    if value.is_finite() {
+        json_float(value)
+    } else if value.is_nan() {
+        "nan".to_string()
+    } else if value > 0.0 {
+        "inf".to_string()
+    } else {
+        "-inf".to_string()
+    }
+}

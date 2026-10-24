@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from io import StringIO
+from math import inf
+from math import isnan
 from os import linesep
 from pathlib import Path
 from re import escape
@@ -19,6 +21,7 @@ from typeline import TsvWriter
 from typeline.codecs import boolean
 from typeline.codecs import delimited
 from typeline.codecs import key_value
+from typeline.codecs import nan
 from typeline.codecs import nullable
 
 
@@ -120,6 +123,9 @@ def test_delimited_codec_reads_an_optional_trailing_separator(trailing_sep: bool
         pytest.param(boolean(), "Y", True, id="yes"),
         pytest.param(boolean(), "N", False, id="no"),
         pytest.param(boolean(true="1", false="0"), "1", True, id="one"),
+        pytest.param(nan("NaN", inf="Inf", neg_inf="-Inf"), "Inf", inf, id="infinity"),
+        pytest.param(nan("?", inf="?", neg_inf="-?"), "-?", -inf, id="negative-infinity"),
+        pytest.param(nan("NaN"), "1.5", 1.5, id="finite"),
         pytest.param(nullable(COLOR, missing="0"), "0", None, id="missing"),
         pytest.param(nullable(COLOR, missing="0"), "1,2,3", Color(1, 2, 3), id="present"),
     ],
@@ -145,6 +151,77 @@ def test_boolean_codec_refuses_other_text() -> None:
     """Test that a boolean codec refuses text that is neither of its two values."""
     with pytest.raises(ValueError, match=r"^Expected 'Y' or 'N' but found 'yes'!"):
         _ = boolean().from_text("yes")
+
+
+def test_nan_codec_reads_and_writes_nan_as_its_text() -> None:
+    """Test that a NaN codec reads its text as NaN and writes NaN as its text."""
+    codec = nan("NaN")
+    assert isnan(codec.from_text("NaN"))
+    assert codec.into_text(float("nan")) == "NaN"
+
+
+def test_nan_codec_reads_nan_from_text_that_also_spells_infinity() -> None:
+    """Test that a NaN codec reads NaN from text it also writes for infinity."""
+    codec = nan("?", inf="?", neg_inf="-?")
+    assert isnan(codec.from_text("?"))
+    assert codec.into_text(inf) == "?"
+
+
+@pytest.mark.parametrize(
+    "text,value",
+    [("0", 0.0), ("-1.5e3", -1500.0), ("1E-2", 0.01), ("inf", inf), ("-inf", -inf)],
+)
+def test_nan_codec_reads_other_text_as_a_float(text: str, value: float) -> None:
+    """Test that a NaN codec reads text other than its own as a float field reads it."""
+    assert nan("?").from_text(text) == value
+
+
+def test_nan_codec_reads_nan_as_a_float_field_reads_it() -> None:
+    """Test that a NaN codec still reads `nan` as NaN, as a float field does."""
+    assert isnan(nan("?").from_text("nan"))
+
+
+@pytest.mark.parametrize("text", ["", "NaN", ".5", "1.", "+1", " 1", "1_0", "1e400"])
+def test_nan_codec_refuses_text_that_is_not_a_float(text: str) -> None:
+    """Test that a NaN codec refuses text that is neither its own nor a float."""
+    with pytest.raises(ValueError, match=rf"^Expected a float but found '{escape(text)}'!"):
+        _ = nan("?").from_text(text)
+
+
+@pytest.mark.parametrize(
+    "value,text",
+    [(1.0, "1.0"), (1e-5, "0.00001"), (1e-6, "1e-6"), (1e16, "1e16"), (inf, "inf"), (-inf, "-inf")],
+)
+def test_nan_codec_writes_other_floats_as_a_float_field(value: float, text: str) -> None:
+    """Test that a NaN codec writes floats it has no text for as a float field writes them."""
+    assert nan("?").into_text(value) == text
+
+
+@dataclass
+class Measured:
+    """A record with a float that may be NaN or infinite, and one that may be missing."""
+
+    name: str
+    ratio: float
+    depth: float | None
+
+
+def test_nan_codec_round_trips_through_a_file(tmp_path: Path) -> None:
+    """Test that a NaN codec for floats reads and writes plain and optional float fields."""
+    codecs: Codecs = {float: nan("?", inf="?", neg_inf="-?")}
+    path = tmp_path / "test.tsv"
+
+    with TsvWriter.from_path[Measured](path, codecs=codecs) as writer:
+        writer.write(Measured("a", float("nan"), None))
+        writer.write(Measured("b", -inf, 2.5))
+
+    assert path.read_text() == "a\t?\t\nb\t-?\t2.5\n"
+
+    with TsvReader.from_path[Measured](path, header=False, codecs=codecs) as reader:
+        a, b = list(reader)
+
+    assert (a.name, isnan(a.ratio), a.depth) == ("a", True, None)
+    assert b == Measured("b", -inf, 2.5)
 
 
 def test_codecs_alias_types_a_mapping_of_different_codecs(tmp_path: Path) -> None:

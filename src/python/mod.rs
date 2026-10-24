@@ -10,8 +10,8 @@ mod write;
 #[pymodule(gil_used = false)]
 mod _native {
     #[pymodule_export]
-    use super::read::{RecordBuilder, RowReader};
+    use super::read::{RecordBuilder, RowReader, read_float};
 
     #[pymodule_export]
-    use super::write::RecordFormatter;
+    use super::write::{RecordFormatter, write_float};
 }
