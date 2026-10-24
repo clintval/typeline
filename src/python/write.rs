@@ -1,5 +1,6 @@
 //! Writing records natively as lines of delimited text.
 
+use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use pyo3::exceptions::{PyException, PyValueError};
@@ -128,6 +129,7 @@ struct Named {
     out: Out,
     none: Py<PyString>,
     label: String,
+    taken: HashSet<String>,
     keys: OnceLock<Vec<String>>,
 }
 
@@ -202,7 +204,7 @@ impl RecordFormatter {
         record_type: Bound<'_, PyType>,
         fields: Vec<OutFieldSpec<'_>>,
         extra: Option<Bound<'_, PyString>>,
-        named: Option<OutFieldSpec<'_>>,
+        named: Option<(OutFieldSpec<'_>, Vec<String>)>,
         encode: Bound<'_, PyAny>,
         delimiter: char,
         line_end: String,
@@ -222,11 +224,12 @@ impl RecordFormatter {
             })
             .collect::<PyResult<Vec<_>>>()?;
         let named = match named {
-            Some((name, out, none, details, label)) => Some(Named {
+            Some(((name, out, none, details, label), taken)) => Some(Named {
                 name: name.unbind(),
                 out: Out::new(&out, details.as_ref())?,
                 none: none.unbind(),
                 label,
+                taken: taken.into_iter().collect(),
                 keys: OnceLock::new(),
             }),
             None => None,
@@ -399,6 +402,18 @@ impl RecordFormatter {
             .map(|key| key.extract::<String>())
             .collect::<PyResult<Vec<String>>>()?;
         let first = named.keys.get().is_none();
+        let taken: Vec<&String> = found
+            .iter()
+            .filter(|key| named.taken.contains(*key))
+            .collect();
+        if first && !taken.is_empty() {
+            return Err(PyValueError::new_err(format!(
+                "The NamedExtraColumns field '{name}' of {} names columns that other fields hold: \
+                 {}!",
+                self.record_name,
+                PyList::new(py, taken)?.repr()?,
+            )));
+        }
         let keys = named.keys.get().unwrap_or(&found);
         if !first
             && (keys.len() != found.len()

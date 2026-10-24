@@ -229,3 +229,43 @@ def test_a_record_holds_the_other_columns_in_one_field_only() -> None:
         _ = TsvReader[Twice](StringIO(""))
     with pytest.raises(TypeError, match=message):
         _ = TsvWriter[Twice](StringIO())
+
+
+def test_reader_refuses_a_header_that_repeats_the_name_of_an_extra_column() -> None:
+    """Test that a header naming an extra column twice is refused, since one would be lost."""
+    message = (
+        r"^Columns of header repeat a name on line 1! Header: \['size', 'a\.fr', 'a\.fr'\]\."
+        + r" Repeated in header: \['a\.fr'\]\.$"
+    )
+    with pytest.raises(ValueError, match=message):
+        _ = TsvReader[Bin](StringIO("size\ta.fr\ta.fr\n187\t1\t2\n"))
+
+
+def test_writer_refuses_an_extra_column_named_like_another_field() -> None:
+    """Test that an extra column may not take the name of another field's column."""
+    handle = StringIO()
+    writer = TsvWriter[Bin](handle, header=True)
+
+    message = (
+        r"^The NamedExtraColumns field 'counts' of Bin names columns that other fields hold:"
+        + r" \['size'\]!$"
+    )
+    with pytest.raises(ValueError, match=message):
+        writer.write(Bin(187, {"a.fr": 1, "size": 3}))
+
+    writer.write(Bin(188, {"a.fr": 2}))
+
+    assert handle.getvalue() == "size\ta.fr\n188\t2\n".replace("\n", linesep)
+
+
+def test_writer_keeps_the_header_to_write_when_it_cannot_be_written() -> None:
+    """Test that a header that cannot be written is not skipped for the records after it."""
+    handle = StringIO()
+    writer = TsvWriter[Bin](handle, header=True, quoting=False)
+
+    message = r"^Cannot write field 'counts' of Bin without quoting"
+    for size in (187, 188):
+        with pytest.raises(ValueError, match=message):
+            writer.write(Bin(size, {"a\tb": 1}))
+
+    assert handle.getvalue() == ""

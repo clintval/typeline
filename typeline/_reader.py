@@ -202,7 +202,9 @@ class DelimitedDataReader(
         columns: set[str] = set(expected)
         if found is not None:
             repeated: list[str] = sorted(
-                name for name, count in Counter(found).items() if count > 1 and name in columns
+                name
+                for name, count in Counter(found).items()
+                if count > 1 and (name in columns or named_type is not None)
             )
             if repeated:
                 raise ValueError(

@@ -28,7 +28,7 @@ class RecordFormatter:
         record_type: type[Any],
         fields: list[tuple[str, str, str, Any, str]],
         extra: str | None,
-        named: tuple[str, str, str, Any, str] | None,
+        named: tuple[tuple[str, str, str, Any, str], list[str]] | None,
         encode: Callable[[Any], bytes],
         delimiter: str,
         line_end: str,

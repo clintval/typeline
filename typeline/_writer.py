@@ -151,12 +151,15 @@ class DelimitedDataWriter(
             None if named_type is not None else extra_field,
             None
             if extra_field is None or named_type is None
-            else _out_spec(
-                extra_field,
-                named_type,
-                codecs,
-                none_field,
-                f"field '{extra_field}' of type {type_name(named_type)}",
+            else (
+                _out_spec(
+                    extra_field,
+                    named_type,
+                    codecs,
+                    none_field,
+                    f"field '{extra_field}' of type {type_name(named_type)}",
+                ),
+                list(self._header),
             ),
             JSONEncoder(enc_hook=enc_hook).encode,
             self.delimiter,
@@ -235,8 +238,9 @@ class DelimitedDataWriter(
 
     def _write_header(self, names: list[str]) -> None:
         """Write the header line, naming the columns of a `NamedExtraColumns` field last."""
+        line = self._formatter.line([*self._header, *names])
         self._header_pending = False
-        _ = self._handle.write(self._formatter.line([*self._header, *names]))
+        _ = self._handle.write(line)
 
     def write_comment(self, comment: str | Comment) -> None:
         """Write a comment, e.g. one a reader sent to `on_comment`.
