@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from io import StringIO
 from math import isnan
+from os import linesep
 from pathlib import Path
 from re import escape
 
@@ -133,7 +134,7 @@ def test_writer_writes_each_value_as_the_value_type_with_its_codec() -> None:
 
     writer.write(Ratios("a", {"x": 0.5, "y": float("nan"), "z": None}))
 
-    assert handle.getvalue() == "a\t0.5\t?\t\n"
+    assert handle.getvalue() == "a\t0.5\t?\t\n".replace("\n", linesep)
 
 
 def test_writer_refuses_a_record_whose_columns_differ_from_the_first() -> None:
@@ -159,7 +160,7 @@ def test_writer_takes_the_columns_from_a_record_that_was_written() -> None:
 
     writer.write(Bin(188, {"b.rf": 2}))
 
-    assert handle.getvalue() == "188\t2\n"
+    assert handle.getvalue() == "188\t2\n".replace("\n", linesep)
 
 
 def test_writer_refuses_to_write_the_header_before_the_first_record() -> None:
@@ -181,7 +182,7 @@ def test_writer_writes_all_records_after_a_header_named_by_the_first() -> None:
 
     writer.write_all([Bin(187, {"a.fr": 4123}), Bin(188, {"a.fr": 4100})])
 
-    assert handle.getvalue() == "size\ta.fr\n187\t4123\n188\t4100\n"
+    assert handle.getvalue() == "size\ta.fr\n187\t4123\n188\t4100\n".replace("\n", linesep)
 
 
 @pytest.mark.parametrize("write_all", [True, False])
