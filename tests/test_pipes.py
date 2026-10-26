@@ -15,6 +15,7 @@ import pytest
 
 from typeline import TsvReader
 from typeline import TsvWriter
+from typeline import open_for_reading
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Windows has no named pipes")
 
@@ -242,3 +243,13 @@ def test_records_round_trip_through_a_fifo(fifo: Path) -> None:
 
     assert read == records
     assert comments == ["# first comment", *(f"# at {index}" for index in range(0, 5_000, 1_000))]
+
+
+@pytest.mark.parametrize("_name,compress", COMPRESSORS)
+def test_open_for_reading_reads_a_fifo(
+    fifo: Path, _name: str, compress: Callable[[bytes], bytes]
+) -> None:
+    """Test that open_for_reading reads plain and compressed data from a named pipe."""
+    with writing_to_fifo(fifo, compress(TEXT.encode())):
+        with open_for_reading(fifo) as handle:
+            assert handle.read() == TEXT

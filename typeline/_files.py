@@ -99,7 +99,23 @@ def on_line(line_number: int | None, file_name: str | None) -> str:
 
 
 def open_for_reading(path: Path | str) -> TextIO:
-    """Open a file or pipe once to read as UTF-8 text, decompressing it when it is compressed."""
+    """Open a file or pipe once to read as UTF-8 text, decompressing it when it is compressed.
+
+    Gzip, bzip2, and xz are recognized by the first bytes of the file, not by its suffix.
+    The file is opened and read only once, so a pipe such as a FIFO or `/dev/stdin` works.
+    A byte order mark is skipped, and line breaks are left as they are.
+    Closing the returned handle closes the file.
+
+    Args:
+        path: the path of the file or pipe to read; a leading `~` is the home directory.
+
+    Returns:
+        A text handle whose `name` is the path it was opened from.
+
+    Raises:
+        OSError: if the file cannot be opened, e.g. `FileNotFoundError` for a missing file.
+        UnicodeDecodeError: when reading text that is not UTF-8.
+    """
     source = Path(path).expanduser().open("rb")
     try:
         start, stream = _start(source)

@@ -116,6 +116,23 @@ with TsvReader.from_path[MyData](f"{path}.gz", header=False) as reader:
     assert list(reader) == [MyData(10, "test1", 0.2)]
 ```
 
+`open_for_reading` opens a path the same way, for reading text before any record type is known, such as the first line of a file.
+
+```python
+import gzip
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from typeline import open_for_reading
+
+with TemporaryDirectory() as directory:
+    sniffed = Path(directory) / "samples.tsv.gz"
+    sniffed.write_bytes(gzip.compress(b"id\tname\tscore\n10\ttest1\t0.2\n"))
+
+    with open_for_reading(sniffed) as handle:
+        assert handle.readline().rstrip("\n").split("\t") == ["id", "name", "score"]
+```
+
 ### Missing Values
 
 `None` is written as the `none_field`, an empty field by default.

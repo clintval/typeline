@@ -5,6 +5,7 @@ from ._counter_columns import CounterColumns
 from ._data_types import ExtraColumns
 from ._data_types import NamedExtraColumns
 from ._data_types import RecordType
+from ._files import open_for_reading
 from ._reader import CsvReader
 from ._reader import DelimitedDataReader
 from ._reader import ReaderOptions
@@ -34,6 +35,7 @@ __all__ = [
     "TsvReader",
     "TsvWriter",
     "WriterOptions",
+    "open_for_reading",
 ]
 
 
