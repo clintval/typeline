@@ -78,6 +78,11 @@ class DelimitedDataWriter(
 ):
     """A writer for writing dataclasses into delimited data."""
 
+    @property
+    def record_type(self) -> type[RecordType]:
+        """The dataclass this writer was subscripted with, e.g. `MyData` for `TsvWriter[MyData]`."""
+        return cast(type[RecordType], self._bound_record_type())
+
     def __init__(
         self,
         handle: TextIO,
