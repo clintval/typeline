@@ -40,7 +40,7 @@ def test_open_for_reading_reads_the_same_text_whatever_the_suffix(
 def test_open_for_reading_accepts_a_string_path(tmp_path: Path) -> None:
     """Test that a path given as a string opens, and names the handle."""
     path = tmp_path / "samples.tsv"
-    _ = path.write_text(TEXT)
+    _ = path.write_bytes(TEXT.encode())
 
     with open_for_reading(str(path)) as handle:
         assert handle.name == str(path)
@@ -51,7 +51,7 @@ def test_open_for_reading_expands_the_home_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test that a leading ~ in the path is the home directory."""
-    _ = (tmp_path / "samples.tsv").write_text(TEXT)
+    _ = (tmp_path / "samples.tsv").write_bytes(TEXT.encode())
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
