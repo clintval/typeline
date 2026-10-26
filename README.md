@@ -70,6 +70,7 @@ A reader expects a header by default, and matches its columns to fields by name,
 Pass `header=False` to read columns in field order.
 A field that cannot be read raises a `ValueError` naming the field, its type, its text, and its line, and so does a row with the wrong number of columns.
 A reader from `from_path` closes its file once it is read to the end, so reading everything into a list needs no `with` block.
+A reader or writer's `record_type` is the dataclass its class was subscripted with.
 
 ```python
 assert list(TsvReader.from_path[MyData](path)) == records

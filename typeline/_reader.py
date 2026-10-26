@@ -123,6 +123,11 @@ class DelimitedDataReader(
 ):
     """A reader for reading delimited text data into dataclasses."""
 
+    @property
+    def record_type(self) -> type[RecordType]:
+        """The dataclass this reader was subscripted with, e.g. `MyData` for `TsvReader[MyData]`."""
+        return cast(type[RecordType], self._bound_record_type())
+
     def __init__(
         self,
         handle: TextIO,
