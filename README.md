@@ -1,4 +1,6 @@
-# typeline
+![Banner for typeline](https://raw.githubusercontent.com/clintval/typeline/main/.github/img/typeline_banner.svg)
+
+---
 
 [![PyPi Release](https://badge.fury.io/py/typeline.svg)](https://badge.fury.io/py/typeline)
 [![CI](https://github.com/clintval/typeline/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/clintval/typeline/actions/workflows/tests.yml?query=branch%3Amain)
